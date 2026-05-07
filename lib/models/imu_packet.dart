@@ -2,15 +2,10 @@ import 'dart:typed_data';
 import 'dart:math';
 
 class DpImuData {
-  // Сырые данные
   final List<int> rawAcc;
   final List<int> rawGyro;
-
-  // Конвертированные данные в СИ (для GTSAM)
   final List<double> accMs2;   // м/с^2
   final List<double> gyroRads; // рад/с
-
-  // Конвертированные данные (опционально, для логов)
   final List<double> accG;     // g
   final List<double> gyroDps;  // градусы/с
 
@@ -28,8 +23,8 @@ class DpImuPacket {
   final int timestamp; 
   final List<DpImuData> imu; 
 
-  // Коэффициенты для LSM6DSV16X / LSM6DSV32X
-  // Аксель: +-8g -> 0.244 mg/LSB
+  // Коэффициенты пересчета сырых данных IMU-сенсора
+  // Акселерометр: +-8g -> 0.244 mg/LSB
   static const double _accelSensitivity = 0.244 / 1000.0; // g/LSB
   static const double _gravity = 9.80665; // м/с^2
 
@@ -50,7 +45,6 @@ class DpImuPacket {
     List<DpImuData> imuList = [];
     
     for (int i = 0; i < 4; i++) {
-      // Читаем сырые данные
       List<int> rawAcc = [
         byteData.getInt16(offset, Endian.little),
         byteData.getInt16(offset + 2, Endian.little),
@@ -65,11 +59,9 @@ class DpImuPacket {
       ];
       offset += 6;
 
-      // Преобразование акселерометра
       List<double> accG = rawAcc.map((val) => val * _accelSensitivity).toList();
       List<double> accMs2 = accG.map((val) => val * _gravity).toList();
 
-      // Преобразование гироскопа
       List<double> gyroDps = rawGyro.map((val) => val * _gyroSensitivity).toList();
       List<double> gyroRads = gyroDps.map((val) => val * (pi / 180.0)).toList();
 
