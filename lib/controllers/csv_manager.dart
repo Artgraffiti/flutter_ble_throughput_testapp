@@ -1,11 +1,14 @@
+// ==> lib/controllers/csv_manager.dart <==
 import 'dart:io';
+
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
+
 import '../models/imu_packet.dart';
 import '../models/imu_csv_format.dart';
 
 class CsvManager {
-  final ValueNotifier<String> logNotifier; // Ссылка на логгер из DeviceController
+  final ValueNotifier<String> logNotifier; 
 
   String? saveDirectory;
   ImuCsvFormat selectedCsvFormat = ImuCsvFormat.converted;
@@ -24,7 +27,7 @@ class CsvManager {
     );
     if (selectedDirectory != null) {
       saveDirectory = selectedDirectory;
-      // Принудительное обновление слушателей UI (вызовется при перерисовке)
+      // Принудительное обновление UI
       isRecordingCsvNotifier.value = isRecordingCsvNotifier.value; 
     }
   }
@@ -91,6 +94,7 @@ class CsvManager {
       _recordedLinesCount++;
     }
 
+    // Обновляем UI счетчика раз в 50 строк, чтобы не просаживать FPS
     if (_recordedLinesCount % 50 == 0) {
       recordedLinesNotifier.value = _recordedLinesCount;
     }
