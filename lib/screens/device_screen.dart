@@ -2,33 +2,9 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
-
-enum ThroughputUnit {
-  bits,
-  bytes,
-  kilobits,
-  kilobytes,
-  megabits,
-  megabytes;
-
-  String formatSpeed(double bytesPerSec) {
-    switch (this) {
-      case ThroughputUnit.bits:
-        return "${(bytesPerSec * 8).toStringAsFixed(0)} бит/с";
-      case ThroughputUnit.bytes:
-        return "${bytesPerSec.toStringAsFixed(0)} Байт/с";
-      case ThroughputUnit.kilobits:
-        return "${((bytesPerSec * 8) / 1000).toStringAsFixed(2)} Кбит/с";
-      case ThroughputUnit.kilobytes:
-        return "${(bytesPerSec / 1024).toStringAsFixed(2)} Кбайт/с";
-      case ThroughputUnit.megabits:
-        return "${((bytesPerSec * 8) / 1000000).toStringAsFixed(2)} Мбит/с";
-      case ThroughputUnit.megabytes:
-        return "${(bytesPerSec / (1024 * 1024)).toStringAsFixed(2)} Мбайт/с";
-    }
-  }
-}
+import '../models/throughput_unit.dart';
 
 class DeviceScreen extends StatefulWidget {
   final BluetoothDevice device;
@@ -39,7 +15,7 @@ class DeviceScreen extends StatefulWidget {
   State<DeviceScreen> createState() => _DeviceScreenState();
 }
 
-class _DeviceScreenState extends State<DeviceScreen> with WidgetsBindingObserver {
+class _DeviceScreenState extends State<DeviceScreen> with WidgetsBindingObserver, TickerProviderStateMixin {
   BluetoothConnectionState _connectionState = BluetoothConnectionState.disconnected;
   late StreamSubscription<BluetoothConnectionState> _connectionStateSubscription;
   
@@ -54,30 +30,58 @@ class _DeviceScreenState extends State<DeviceScreen> with WidgetsBindingObserver
   bool _isWriteMode = true;
   int _currentMtu = 0;
   ThroughputUnit _selectedUnit = ThroughputUnit.kilobits;
-  int _updateIntervalMs = 500;
+  int _updateIntervalMs = 33; // ~30 FPS для плавности экрана
   
   StreamSubscription? _notifySubscription;
   int _notifyBytesReceived = 0;
+  int _notifyPacketCount = 0; // Счетчик пакетов для визуализации
   Timer? _notifyUpdateTimer;
   final Stopwatch _notifyStopwatch = Stopwatch();
+  
+  List<int> _lastPacketData = [];
 
   // Переменные для мгновенной скорости
   double _instantSpeed = 0;
   double _maxSpeed = 0;
   int _lastBytes = 0;
   double _lastTime = 0;
+  final double _speedCalcInterval = 0.5; // Считаем скорость жестко раз в 500 мс для стабильности
+
+  // Переменные для FPS
+  late Ticker _fpsTicker;
+  int _frameCount = 0;
+  double _currentFps = 0.0;
+  DateTime _lastFpsUpdate = DateTime.now();
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    _connectionStateSubscription = widget.device.connectionState.listen((state) {
-      setState(() {
-        _connectionState = state;
-        if (state == BluetoothConnectionState.connected) {
-          _prepareForTest();
+    
+    _fpsTicker = createTicker((_) {
+      _frameCount++;
+      final now = DateTime.now();
+      if (now.difference(_lastFpsUpdate).inMilliseconds >= 1000) {
+        if (mounted) {
+          setState(() {
+            _currentFps = _frameCount.toDouble();
+            _frameCount = 0;
+            _lastFpsUpdate = now;
+          });
         }
-      });
+      }
+    });
+    _fpsTicker.start();
+
+    _connectionStateSubscription = widget.device.connectionState.listen((state) {
+      if (mounted) {
+        setState(() {
+          _connectionState = state;
+          if (state == BluetoothConnectionState.connected) {
+            _prepareForTest();
+          }
+        });
+      }
     });
 
     _connect();
@@ -107,7 +111,7 @@ class _DeviceScreenState extends State<DeviceScreen> with WidgetsBindingObserver
         await widget.device.requestMtu(512);
       }
       var mtu = await widget.device.mtu.first;
-      setState(() => _currentMtu = mtu);
+      if (mounted) setState(() => _currentMtu = mtu);
 
       List<BluetoothService> services = await widget.device.discoverServices();
 
@@ -125,25 +129,27 @@ class _DeviceScreenState extends State<DeviceScreen> with WidgetsBindingObserver
         }
       }
 
-      setState(() {
-        _writableCharacteristics = writable;
-        _notifyCharacteristics = notifiable;
-        if (writable.isNotEmpty) {
-          _selectedCharacteristic = writable.first;
-        }
-        if (notifiable.isNotEmpty) {
-          try {
-            _selectedNotifyCharacteristic = notifiable.firstWhere(
-              (c) => c.serviceUuid.toString() == "7ec70001-0f5b-4777-ad1d-5add0ac66680",
-              orElse: () => notifiable.first
-            );
-          } catch (_) {
-            _selectedNotifyCharacteristic = notifiable.first;
+      if (mounted) {
+        setState(() {
+          _writableCharacteristics = writable;
+          _notifyCharacteristics = notifiable;
+          if (writable.isNotEmpty) {
+            _selectedCharacteristic = writable.first;
           }
-        }
-      });
+          if (notifiable.isNotEmpty) {
+            try {
+              _selectedNotifyCharacteristic = notifiable.firstWhere(
+                (c) => c.serviceUuid.toString() == "7ec70001-0f5b-4777-ad1d-5add0ac66680",
+                orElse: () => notifiable.first
+              );
+            } catch (_) {
+              _selectedNotifyCharacteristic = notifiable.first;
+            }
+          }
+        });
+      }
     } catch (e) {
-      setState(() => _logText = "Ошибка подготовки: $e");
+      if (mounted) setState(() => _logText = "Ошибка подготовки: $e");
     }
   }
 
@@ -162,7 +168,7 @@ class _DeviceScreenState extends State<DeviceScreen> with WidgetsBindingObserver
     try {
       int packetSize = (_currentMtu > 3) ? _currentMtu - 3 : 20;
       List<int> data = List.filled(packetSize, 0xAA);
-      int packetsToSend = 500; // Увеличил кол-во пакетов, чтобы успеть увидеть мгновенную скорость
+      int packetsToSend = 1000;
       int totalBytes = packetsToSend * packetSize;
 
       bool withoutResponse = _selectedCharacteristic!.properties.writeWithoutResponse;
@@ -170,29 +176,34 @@ class _DeviceScreenState extends State<DeviceScreen> with WidgetsBindingObserver
 
       Stopwatch stopwatch = Stopwatch()..start();
       int bytesSent = 0;
+      double lastUiUpdateTime = 0;
 
       for (int i = 0; i < packetsToSend; i++) {
         await _selectedCharacteristic!.write(data, withoutResponse: withoutResponse);
         bytesSent += packetSize;
 
-        // Обновляем мгновенную скорость каждые ~20 пакетов
-        if (i % 20 == 0) {
-           double now = stopwatch.elapsedMilliseconds / 1000.0;
-           if (now - _lastTime >= _updateIntervalMs / 1000.0) {
-             double deltaT = now - _lastTime;
-             double deltaBytes = (bytesSent - _lastBytes).toDouble();
-             
+        double now = stopwatch.elapsedMilliseconds / 1000.0;
+        
+        // Считаем скорость стабильно раз в _speedCalcInterval (500мс)
+        if (now - _lastTime >= _speedCalcInterval) {
+          double deltaT = now - _lastTime;
+          double deltaBytes = (bytesSent - _lastBytes).toDouble();
+          _instantSpeed = deltaBytes / deltaT;
+          if (_instantSpeed > _maxSpeed) _maxSpeed = _instantSpeed;
+          _lastBytes = bytesSent;
+          _lastTime = now;
+        }
+
+        // Обновляем UI с выбранным интервалом (например, каждые 33мс)
+        if (now - lastUiUpdateTime >= _updateIntervalMs / 1000.0) {
+           if (mounted) {
              setState(() {
-               _instantSpeed = deltaBytes / deltaT;
-               if (_instantSpeed > _maxSpeed) _maxSpeed = _instantSpeed;
                _logText = "Отправка... ${(i / packetsToSend * 100).toStringAsFixed(0)}%\n"
                           "Мгновенная: ${_selectedUnit.formatSpeed(_instantSpeed)}\n"
                           "Максимальная: ${_selectedUnit.formatSpeed(_maxSpeed)}";
              });
-             
-             _lastBytes = bytesSent;
-             _lastTime = now;
            }
+           lastUiUpdateTime = now;
         }
       }
 
@@ -201,18 +212,20 @@ class _DeviceScreenState extends State<DeviceScreen> with WidgetsBindingObserver
       double seconds = stopwatch.elapsedMilliseconds / 1000.0;
       double speedBytesPerSec = totalBytes / seconds;
 
-      setState(() {
-        _logText = "Тип: $writeType\n"
-                   "Отправлено: $totalBytes байт\n"
-                   "Время: ${seconds.toStringAsFixed(2)} сек\n"
-                   "Средняя: ${_selectedUnit.formatSpeed(speedBytesPerSec)}\n"
-                   "Максимальная: ${_selectedUnit.formatSpeed(_maxSpeed)}";
-      });
+      if (mounted) {
+        setState(() {
+          _logText = "Тип: $writeType\n"
+                     "Отправлено: $totalBytes байт\n"
+                     "Время: ${seconds.toStringAsFixed(2)} сек\n"
+                     "Средняя: ${_selectedUnit.formatSpeed(speedBytesPerSec)}\n"
+                     "Максимальная: ${_selectedUnit.formatSpeed(_maxSpeed)}";
+        });
+      }
 
     } catch (e) {
-      setState(() => _logText = "Ошибка теста: $e");
+      if (mounted) setState(() => _logText = "Ошибка теста: $e");
     } finally {
-      setState(() => _isTesting = false);
+      if (mounted) setState(() => _isTesting = false);
     }
   }
 
@@ -230,18 +243,22 @@ class _DeviceScreenState extends State<DeviceScreen> with WidgetsBindingObserver
         debugPrint("Ошибка отключения уведомлений: $e");
       }
 
-      setState(() {
-        _isNotifyTesting = false;
-        _updateNotifyStats(finalUpdate: true);
-      });
+      if (mounted) {
+        setState(() {
+          _isNotifyTesting = false;
+          _updateNotifyStats(finalUpdate: true);
+        });
+      }
     } else {
       setState(() {
         _isNotifyTesting = true;
         _notifyBytesReceived = 0;
+        _notifyPacketCount = 0;
         _instantSpeed = 0;
         _maxSpeed = 0;
         _lastBytes = 0;
         _lastTime = 0;
+        _lastPacketData = [];
         _logText = "Ожидание данных...";
       });
 
@@ -253,6 +270,8 @@ class _DeviceScreenState extends State<DeviceScreen> with WidgetsBindingObserver
 
         _notifySubscription = _selectedNotifyCharacteristic!.onValueReceived.listen((data) {
           _notifyBytesReceived += data.length;
+          _notifyPacketCount++; // Увеличиваем счетчик
+          _lastPacketData = data;
         });
 
         _notifyUpdateTimer = Timer.periodic(Duration(milliseconds: _updateIntervalMs), (timer) {
@@ -260,10 +279,12 @@ class _DeviceScreenState extends State<DeviceScreen> with WidgetsBindingObserver
         });
 
       } catch (e) {
-        setState(() {
-          _isNotifyTesting = false;
-          _logText = "Ошибка запуска Notify: $e";
-        });
+        if (mounted) {
+          setState(() {
+            _isNotifyTesting = false;
+            _logText = "Ошибка запуска Notify: $e";
+          });
+        }
       }
     }
   }
@@ -272,9 +293,9 @@ class _DeviceScreenState extends State<DeviceScreen> with WidgetsBindingObserver
     double now = _notifyStopwatch.elapsedMilliseconds / 1000.0;
     if (now == 0) return;
 
-    // Расчет мгновенной скорости
+    // Считаем мгновенную скорость только раз в 500мс для стабильности
     double deltaT = now - _lastTime;
-    if (deltaT > 0) {
+    if (deltaT >= _speedCalcInterval || finalUpdate) {
       double deltaBytes = (_notifyBytesReceived - _lastBytes).toDouble();
       _instantSpeed = deltaBytes / deltaT;
       if (_instantSpeed > _maxSpeed) _maxSpeed = _instantSpeed;
@@ -284,17 +305,25 @@ class _DeviceScreenState extends State<DeviceScreen> with WidgetsBindingObserver
 
     double avgSpeed = _notifyBytesReceived / now;
 
-    setState(() {
-      _logText = "Получено: $_notifyBytesReceived байт\n"
-                 "Время: ${now.toStringAsFixed(2)} сек\n"
-                 "Мгновенная: ${_selectedUnit.formatSpeed(_instantSpeed)}\n"
-                 "Средняя: ${_selectedUnit.formatSpeed(avgSpeed)}\n"
-                 "Максимальная: ${_selectedUnit.formatSpeed(_maxSpeed)}";
-    });
+    String hexData = _lastPacketData.isEmpty 
+        ? "Нет данных" 
+        : _lastPacketData.map((b) => b.toRadixString(16).padLeft(2, '0').toUpperCase()).join(' ');
+
+    if (mounted) {
+      setState(() {
+        _logText = "Получено: $_notifyBytesReceived байт\n"
+                   "Время: ${now.toStringAsFixed(2)} сек\n"
+                   "Мгновенная: ${_selectedUnit.formatSpeed(_instantSpeed)}\n"
+                   "Средняя: ${_selectedUnit.formatSpeed(avgSpeed)}\n"
+                   "Максимальная: ${_selectedUnit.formatSpeed(_maxSpeed)}\n\n"
+                   "Последний пакет (№$_notifyPacketCount, ${_lastPacketData.length} байт):\n$hexData";
+      });
+    }
   }
 
   @override
   void dispose() {
+    _fpsTicker.dispose();
     WidgetsBinding.instance.removeObserver(this);
     _connectionStateSubscription.cancel();
     _notifySubscription?.cancel();
@@ -311,6 +340,15 @@ class _DeviceScreenState extends State<DeviceScreen> with WidgetsBindingObserver
             ? widget.device.platformName
             : 'Unknown Device'),
         actions: [
+          Center(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16.0),
+              child: Text(
+                'FPS: ${_currentFps.toStringAsFixed(0)}',
+                style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.green),
+              ),
+            ),
+          ),
           if (_connectionState == BluetoothConnectionState.connected)
             IconButton(
               icon: const Icon(Icons.bluetooth_disabled),
@@ -338,14 +376,22 @@ class _DeviceScreenState extends State<DeviceScreen> with WidgetsBindingObserver
                 _buildModeSelector(),
                 const SizedBox(height: 20),
                 _buildUnitSelector(),
-                const SizedBox(height: 20),
+                const SizedBox(height: 10),
                 _buildIntervalSelector(),
                 const SizedBox(height: 20),
                 if (_isWriteMode) _buildWriteTestSection() else _buildNotifyTestSection(),
                 const SizedBox(height: 20),
-                Text(_logText, 
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(fontSize: 16)),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.grey[200],
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Text(_logText, 
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(fontSize: 14, fontFamily: 'monospace')),
+                ),
               ],
             ],
           ),
@@ -377,6 +423,7 @@ class _DeviceScreenState extends State<DeviceScreen> with WidgetsBindingObserver
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
         const Text("Единицы: "),
+        const SizedBox(width: 8),
         DropdownButton<ThroughputUnit>(
           value: _selectedUnit,
           items: const [
@@ -397,14 +444,17 @@ class _DeviceScreenState extends State<DeviceScreen> with WidgetsBindingObserver
     return Row(
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
-        const Text("Интервал обновления: "),
+        const Text("Интервал UI: "),
+        const SizedBox(width: 8),
         DropdownButton<int>(
           value: _updateIntervalMs,
           items: const [
+            DropdownMenuItem(value: 16, child: Text("16 мс (~60 FPS)")),
+            DropdownMenuItem(value: 33, child: Text("33 мс (~30 FPS)")),
+            DropdownMenuItem(value: 50, child: Text("50 мс")),
             DropdownMenuItem(value: 100, child: Text("100 мс")),
             DropdownMenuItem(value: 200, child: Text("200 мс")),
             DropdownMenuItem(value: 500, child: Text("500 мс")),
-            DropdownMenuItem(value: 1000, child: Text("1 сек")),
           ],
           onChanged: _isTesting || _isNotifyTesting ? null : (v) => setState(() => _updateIntervalMs = v!),
         ),
@@ -434,7 +484,7 @@ class _DeviceScreenState extends State<DeviceScreen> with WidgetsBindingObserver
         ElevatedButton(
           onPressed: _isTesting ? null : _runThroughputTest,
           child: _isTesting
-              ? const CircularProgressIndicator(color: Colors.white)
+              ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))
               : const Text("Запустить Write тест"),
         ),
       ],
