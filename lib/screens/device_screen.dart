@@ -1,3 +1,4 @@
+// ==> lib/screens/device_screen.dart <==
 import 'dart:async';
 import 'dart:io';
 
@@ -5,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import '../models/throughput_unit.dart';
+import '../models/imu_packet.dart'; 
 
 class DeviceScreen extends StatefulWidget {
   final BluetoothDevice device;
@@ -39,6 +41,7 @@ class _DeviceScreenState extends State<DeviceScreen> with WidgetsBindingObserver
   final Stopwatch _notifyStopwatch = Stopwatch();
   
   List<int> _lastPacketData = [];
+  DpImuPacket? _lastImuPacket; // Переменная для хранения разобранных данных IMU
 
   // Переменные для мгновенной скорости
   double _instantSpeed = 0;
@@ -184,7 +187,6 @@ class _DeviceScreenState extends State<DeviceScreen> with WidgetsBindingObserver
 
         double now = stopwatch.elapsedMilliseconds / 1000.0;
         
-        // Считаем скорость стабильно раз в _speedCalcInterval (500мс)
         if (now - _lastTime >= _speedCalcInterval) {
           double deltaT = now - _lastTime;
           double deltaBytes = (bytesSent - _lastBytes).toDouble();
@@ -194,7 +196,6 @@ class _DeviceScreenState extends State<DeviceScreen> with WidgetsBindingObserver
           _lastTime = now;
         }
 
-        // Обновляем UI с выбранным интервалом (например, каждые 33мс)
         if (now - lastUiUpdateTime >= _updateIntervalMs / 1000.0) {
            if (mounted) {
              setState(() {
@@ -259,6 +260,7 @@ class _DeviceScreenState extends State<DeviceScreen> with WidgetsBindingObserver
         _lastBytes = 0;
         _lastTime = 0;
         _lastPacketData = [];
+        _lastImuPacket = null;
         _logText = "Ожидание данных...";
       });
 
@@ -270,8 +272,13 @@ class _DeviceScreenState extends State<DeviceScreen> with WidgetsBindingObserver
 
         _notifySubscription = _selectedNotifyCharacteristic!.onValueReceived.listen((data) {
           _notifyBytesReceived += data.length;
-          _notifyPacketCount++; // Увеличиваем счетчик
+          _notifyPacketCount++; 
           _lastPacketData = data;
+
+          // Проверяем, что получены данные от IMU характеристики, и парсим их
+          if (_selectedNotifyCharacteristic!.uuid.toString() == "7ec70002-0f5b-4777-ad1d-5add0ac66680") {
+             _lastImuPacket = DpImuPacket.fromBytes(data);
+          }
         });
 
         _notifyUpdateTimer = Timer.periodic(Duration(milliseconds: _updateIntervalMs), (timer) {
@@ -293,7 +300,6 @@ class _DeviceScreenState extends State<DeviceScreen> with WidgetsBindingObserver
     double now = _notifyStopwatch.elapsedMilliseconds / 1000.0;
     if (now == 0) return;
 
-    // Считаем мгновенную скорость только раз в 500мс для стабильности
     double deltaT = now - _lastTime;
     if (deltaT >= _speedCalcInterval || finalUpdate) {
       double deltaBytes = (_notifyBytesReceived - _lastBytes).toDouble();
@@ -309,6 +315,26 @@ class _DeviceScreenState extends State<DeviceScreen> with WidgetsBindingObserver
         ? "Нет данных" 
         : _lastPacketData.map((b) => b.toRadixString(16).padLeft(2, '0').toUpperCase()).join(' ');
 
+    String decodedImuText = "";
+    if (_lastImuPacket != null) {
+      decodedImuText = "\n\n[Декодированный IMU]\nTimestamp: ${_lastImuPacket!.timestamp} мкс\n";
+      
+      // Выводим только первый снапшот для компактности
+      var imu = _lastImuPacket!.imu[0]; 
+      
+      String ax = imu.accMs2[0].toStringAsFixed(2);
+      String ay = imu.accMs2[1].toStringAsFixed(2);
+      String az = imu.accMs2[2].toStringAsFixed(2);
+      
+      String gx = imu.gyroRads[0].toStringAsFixed(2);
+      String gy = imu.gyroRads[1].toStringAsFixed(2);
+      String gz = imu.gyroRads[2].toStringAsFixed(2);
+
+      decodedImuText += "Снапшот 0 (СИ):\n";
+      decodedImuText += "ACC: x=$ax, y=$ay, z=$az [m/s^2]\n";
+      decodedImuText += "GYR: x=$gx, y=$gy, z=$gz [rad/s]\n";
+    }
+
     if (mounted) {
       setState(() {
         _logText = "Получено: $_notifyBytesReceived байт\n"
@@ -316,7 +342,8 @@ class _DeviceScreenState extends State<DeviceScreen> with WidgetsBindingObserver
                    "Мгновенная: ${_selectedUnit.formatSpeed(_instantSpeed)}\n"
                    "Средняя: ${_selectedUnit.formatSpeed(avgSpeed)}\n"
                    "Максимальная: ${_selectedUnit.formatSpeed(_maxSpeed)}\n\n"
-                   "Последний пакет (№$_notifyPacketCount, ${_lastPacketData.length} байт):\n$hexData";
+                   "Последний пакет (№$_notifyPacketCount, ${_lastPacketData.length} байт):\n$hexData"
+                   "$decodedImuText";
       });
     }
   }
