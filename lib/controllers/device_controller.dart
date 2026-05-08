@@ -7,19 +7,30 @@ import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 
 import '../models/throughput_unit.dart';
 import '../models/imu_packet.dart';
+import '../models/imu_sensor_config.dart';
 import 'csv_manager.dart';
 
 class DeviceController extends ChangeNotifier {
+  static const String _dpServiceUuid = "7ec70001-0f5b-4777-ad1d-5add0ac66680";
+  static const String _dpImuUuid = "7ec70002-0f5b-4777-ad1d-5add0ac66680";
+  static const String _dpCommandUuid = "7ec70003-0f5b-4777-ad1d-5add0ac66680";
+  static const String _dpImuConfigUuid = "7ec70005-0f5b-4777-ad1d-5add0ac66680";
+
   final BluetoothDevice device;
   late final CsvManager csvManager;
 
-  BluetoothConnectionState connectionState = BluetoothConnectionState.disconnected;
+  BluetoothConnectionState connectionState =
+      BluetoothConnectionState.disconnected;
+  bool isConnecting = false;
   int currentMtu = 0;
   List<BluetoothCharacteristic> writableCharacteristics = [];
   List<BluetoothCharacteristic> notifyCharacteristics = [];
-  
+
   BluetoothCharacteristic? selectedCharacteristic;
   BluetoothCharacteristic? selectedNotifyCharacteristic;
+  BluetoothCharacteristic? imuConfigCharacteristic;
+  ImuSensorConfig imuConfig = ImuSensorConfig.defaults;
+  bool isApplyingImuConfig = false;
 
   final ValueNotifier<String> logTextNotifier = ValueNotifier<String>("");
   final ValueNotifier<bool> isTestingNotifier = ValueNotifier<bool>(false);
@@ -48,6 +59,10 @@ class DeviceController extends ChangeNotifier {
   void _init() {
     _connectionSub = device.connectionState.listen((state) {
       connectionState = state;
+      if (state == BluetoothConnectionState.connected ||
+          state == BluetoothConnectionState.disconnected) {
+        isConnecting = false;
+      }
       notifyListeners();
       if (state == BluetoothConnectionState.connected) {
         _prepareForTest();
@@ -58,13 +73,17 @@ class DeviceController extends ChangeNotifier {
 
   Future<void> connect() async {
     // Предотвращаем спам кнопкой подключения
-    if (connectionState == BluetoothConnectionState.connecting) return;
-    
+    if (isConnecting) return;
+
     try {
+      isConnecting = true;
       logTextNotifier.value = "Подключение...";
+      notifyListeners();
       await device.connect();
     } catch (e) {
       logTextNotifier.value = "Ошибка подключения: $e";
+      isConnecting = false;
+      notifyListeners();
     }
   }
 
@@ -86,28 +105,96 @@ class DeviceController extends ChangeNotifier {
 
       for (var service in services) {
         for (var c in service.characteristics) {
-          if (c.properties.write || c.properties.writeWithoutResponse) writable.add(c);
+          if (c.properties.write || c.properties.writeWithoutResponse) {
+            writable.add(c);
+          }
           if (c.properties.notify || c.properties.indicate) notifiable.add(c);
         }
       }
 
       writableCharacteristics = writable;
       notifyCharacteristics = notifiable;
-      
-      if (writable.isNotEmpty) selectedCharacteristic = writable.first;
+
+      if (writable.isNotEmpty) {
+        selectedCharacteristic = writable.firstWhere(
+          (c) => c.uuid.toString() == _dpCommandUuid,
+          orElse: () => writable.first,
+        );
+      }
       if (notifiable.isNotEmpty) {
         try {
           selectedNotifyCharacteristic = notifiable.firstWhere(
-            (c) => c.serviceUuid.toString() == "7ec70001-0f5b-4777-ad1d-5add0ac66680",
-            orElse: () => notifiable.first
+            (c) => c.uuid.toString() == _dpImuUuid,
+            orElse: () => notifiable.first,
           );
         } catch (_) {
           selectedNotifyCharacteristic = notifiable.first;
         }
       }
+
+      for (var service in services) {
+        if (service.uuid.toString() != _dpServiceUuid) continue;
+
+        for (var c in service.characteristics) {
+          if (c.uuid.toString() == _dpImuConfigUuid) {
+            imuConfigCharacteristic = c;
+            await readImuConfig();
+            break;
+          }
+        }
+      }
+
       notifyListeners();
     } catch (e) {
       logTextNotifier.value = "Ошибка подготовки: $e";
+    }
+  }
+
+  Future<void> readImuConfig() async {
+    final characteristic = imuConfigCharacteristic;
+    if (characteristic == null) return;
+
+    try {
+      final data = await characteristic.read();
+      imuConfig = ImuSensorConfig.fromBytes(data);
+      notifyListeners();
+    } catch (e) {
+      logTextNotifier.value = "Ошибка чтения IMU config: $e";
+    }
+  }
+
+  void selectWriteCharacteristic(BluetoothCharacteristic? characteristic) {
+    selectedCharacteristic = characteristic;
+    notifyListeners();
+  }
+
+  void selectNotifyCharacteristic(BluetoothCharacteristic? characteristic) {
+    selectedNotifyCharacteristic = characteristic;
+    notifyListeners();
+  }
+
+  Future<void> applyImuConfig(ImuSensorConfig config) async {
+    final characteristic = imuConfigCharacteristic;
+    if (characteristic == null) {
+      logTextNotifier.value = "IMU config характеристика не найдена";
+      return;
+    }
+
+    isApplyingImuConfig = true;
+    notifyListeners();
+
+    try {
+      await characteristic.write(config.toBytes(), withoutResponse: false);
+      imuConfig = config;
+      logTextNotifier.value =
+          "IMU config применён: ACC ${config.accelOdrHz} Hz / ${config.accelRangeG} g, "
+          "GYRO ${config.gyroOdrHz} Hz / ${config.gyroRangeDps} dps";
+      await readImuConfig();
+    } catch (e) {
+      logTextNotifier.value = "Ошибка записи IMU config: $e";
+    } finally {
+      isApplyingImuConfig = false;
+      notifyListeners();
     }
   }
 
@@ -124,7 +211,8 @@ class DeviceController extends ChangeNotifier {
       int packetsToSend = 1000;
       int totalBytes = packetsToSend * packetSize;
 
-      bool withoutResponse = selectedCharacteristic!.properties.writeWithoutResponse;
+      bool withoutResponse =
+          selectedCharacteristic!.properties.writeWithoutResponse;
       String writeType = withoutResponse ? "NoResponse" : "WithResponse";
 
       Stopwatch stopwatch = Stopwatch()..start();
@@ -132,7 +220,10 @@ class DeviceController extends ChangeNotifier {
       double lastUiUpdate = 0;
 
       for (int i = 0; i < packetsToSend; i++) {
-        await selectedCharacteristic!.write(data, withoutResponse: withoutResponse);
+        await selectedCharacteristic!.write(
+          data,
+          withoutResponse: withoutResponse,
+        );
         bytesSent += packetSize;
 
         double now = stopwatch.elapsedMilliseconds / 1000.0;
@@ -142,9 +233,10 @@ class DeviceController extends ChangeNotifier {
         }
 
         if (now - lastUiUpdate >= updateIntervalMs / 1000.0) {
-          logTextNotifier.value = "Отправка... ${(i / packetsToSend * 100).toStringAsFixed(0)}%\n"
-                                  "Мгновенная: ${unit.formatSpeed(_instantSpeed)}\n"
-                                  "Максимальная: ${unit.formatSpeed(_maxSpeed)}";
+          logTextNotifier.value =
+              "Отправка... ${(i / packetsToSend * 100).toStringAsFixed(0)}%\n"
+              "Мгновенная: ${unit.formatSpeed(_instantSpeed)}\n"
+              "Максимальная: ${unit.formatSpeed(_maxSpeed)}";
           lastUiUpdate = now;
         }
       }
@@ -153,7 +245,8 @@ class DeviceController extends ChangeNotifier {
       double seconds = stopwatch.elapsedMilliseconds / 1000.0;
       double speedBytesPerSec = totalBytes / seconds;
 
-      logTextNotifier.value = "Тип: $writeType\nОтправлено: $totalBytes байт\nВремя: ${seconds.toStringAsFixed(2)} сек\nСредняя: ${unit.formatSpeed(speedBytesPerSec)}\nМаксимальная: ${unit.formatSpeed(_maxSpeed)}";
+      logTextNotifier.value =
+          "Тип: $writeType\nОтправлено: $totalBytes байт\nВремя: ${seconds.toStringAsFixed(2)} сек\nСредняя: ${unit.formatSpeed(speedBytesPerSec)}\nМаксимальная: ${unit.formatSpeed(_maxSpeed)}";
     } catch (e) {
       logTextNotifier.value = "Ошибка теста: $e";
     } finally {
@@ -161,7 +254,10 @@ class DeviceController extends ChangeNotifier {
     }
   }
 
-  Future<void> toggleNotificationTest(ThroughputUnit unit, int updateIntervalMs) async {
+  Future<void> toggleNotificationTest(
+    ThroughputUnit unit,
+    int updateIntervalMs,
+  ) async {
     if (selectedNotifyCharacteristic == null) return;
 
     if (isTestingNotifier.value) {
@@ -187,12 +283,14 @@ class DeviceController extends ChangeNotifier {
         _notifyStopwatch.reset();
         _notifyStopwatch.start();
 
-        _notifySub = selectedNotifyCharacteristic!.onValueReceived.listen((data) {
+        _notifySub = selectedNotifyCharacteristic!.onValueReceived.listen((
+          data,
+        ) {
           _notifyBytesReceived += data.length;
           _notifyPacketCount++;
           _lastPacketData = data;
 
-          if (selectedNotifyCharacteristic!.uuid.toString() == "7ec70002-0f5b-4777-ad1d-5add0ac66680") {
+          if (selectedNotifyCharacteristic!.uuid.toString() == _dpImuUuid) {
             _lastImuPacket = DpImuPacket.fromBytes(data);
             if (_lastImuPacket != null) {
               csvManager.writeImuToCsv(_lastImuPacket!);
@@ -200,10 +298,12 @@ class DeviceController extends ChangeNotifier {
           }
         });
 
-        _notifyUpdateTimer = Timer.periodic(Duration(milliseconds: updateIntervalMs), (timer) {
-          _updateNotifyStats(unit);
-        });
-
+        _notifyUpdateTimer = Timer.periodic(
+          Duration(milliseconds: updateIntervalMs),
+          (timer) {
+            _updateNotifyStats(unit);
+          },
+        );
       } catch (e) {
         isTestingNotifier.value = false;
         logTextNotifier.value = "Ошибка запуска Notify: $e";
@@ -242,18 +342,22 @@ class DeviceController extends ChangeNotifier {
     double avgSpeed = _notifyBytesReceived / now;
     String hexData = _lastPacketData.isEmpty
         ? "Нет данных"
-        : _lastPacketData.map((b) => b.toRadixString(16).padLeft(2, '0').toUpperCase()).join(' ');
+        : _lastPacketData
+              .map((b) => b.toRadixString(16).padLeft(2, '0').toUpperCase())
+              .join(' ');
 
     String decodedImuText = "";
     if (_lastImuPacket != null) {
       var imu = _lastImuPacket!.imu[0];
-      decodedImuText = "\n\n[Декодированный IMU]\nTimestamp: ${_lastImuPacket!.timestamp} мкс\n"
+      decodedImuText =
+          "\n\n[Декодированный IMU]\nTimestamp: ${_lastImuPacket!.timestamp} мкс\n"
           "Снапшот 0 (СИ):\n"
           "ACC: x=${imu.accMs2[0].toStringAsFixed(2)}, y=${imu.accMs2[1].toStringAsFixed(2)}, z=${imu.accMs2[2].toStringAsFixed(2)} [m/s^2]\n"
           "GYR: x=${imu.gyroRads[0].toStringAsFixed(2)}, y=${imu.gyroRads[1].toStringAsFixed(2)}, z=${imu.gyroRads[2].toStringAsFixed(2)} [rad/s]\n";
     }
 
-    logTextNotifier.value = "Получено: $_notifyBytesReceived байт\nВремя: ${now.toStringAsFixed(2)} сек\nМгновенная: ${unit.formatSpeed(_instantSpeed)}\nСредняя: ${unit.formatSpeed(avgSpeed)}\nМаксимальная: ${unit.formatSpeed(_maxSpeed)}\n\nПоследний пакет (№$_notifyPacketCount, ${_lastPacketData.length} байт):\n$hexData$decodedImuText";
+    logTextNotifier.value =
+        "Получено: $_notifyBytesReceived байт\nВремя: ${now.toStringAsFixed(2)} сек\nМгновенная: ${unit.formatSpeed(_instantSpeed)}\nСредняя: ${unit.formatSpeed(avgSpeed)}\nМаксимальная: ${unit.formatSpeed(_maxSpeed)}\n\nПоследний пакет (№$_notifyPacketCount, ${_lastPacketData.length} байт):\n$hexData$decodedImuText";
   }
 
   @override

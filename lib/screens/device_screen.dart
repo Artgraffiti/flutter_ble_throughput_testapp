@@ -17,7 +17,8 @@ class DeviceScreen extends StatefulWidget {
   State<DeviceScreen> createState() => _DeviceScreenState();
 }
 
-class _DeviceScreenState extends State<DeviceScreen> with WidgetsBindingObserver, TickerProviderStateMixin {
+class _DeviceScreenState extends State<DeviceScreen>
+    with WidgetsBindingObserver, TickerProviderStateMixin {
   late DeviceController _controller;
 
   // Локальные состояния UI
@@ -35,9 +36,9 @@ class _DeviceScreenState extends State<DeviceScreen> with WidgetsBindingObserver
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    
+
     _controller = DeviceController(widget.device);
-    
+
     _fpsTicker = createTicker((_) {
       _frameCount++;
       final now = DateTime.now();
@@ -74,19 +75,30 @@ class _DeviceScreenState extends State<DeviceScreen> with WidgetsBindingObserver
     return ListenableBuilder(
       listenable: _controller,
       builder: (context, child) {
-        final isConnected = _controller.connectionState == BluetoothConnectionState.connected;
-        final isDisconnected = _controller.connectionState == BluetoothConnectionState.disconnected;
+        final isConnected =
+            _controller.connectionState == BluetoothConnectionState.connected;
+        final isDisconnected =
+            _controller.connectionState ==
+            BluetoothConnectionState.disconnected;
+        final isConnecting = _controller.isConnecting;
 
         return Scaffold(
           appBar: AppBar(
-            title: Text(widget.device.platformName.isNotEmpty ? widget.device.platformName : 'Unknown Device'),
+            title: Text(
+              widget.device.platformName.isNotEmpty
+                  ? widget.device.platformName
+                  : 'Unknown Device',
+            ),
             actions: [
               Center(
                 child: Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 16.0),
                   child: Text(
                     'FPS: ${_currentFps.toStringAsFixed(0)}',
-                    style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.green),
+                    style: const TextStyle(
+                      fontWeight: FontWeight.bold,
+                      color: Colors.green,
+                    ),
                   ),
                 ),
               ),
@@ -104,25 +116,29 @@ class _DeviceScreenState extends State<DeviceScreen> with WidgetsBindingObserver
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
                   Text('ID: ${widget.device.remoteId}'),
-                  Text('Status: ${_controller.connectionState.toString().split('.').last}'),
-                  
-                  if (isConnected && _controller.currentMtu > 0) 
+                  Text(
+                    'Status: ${_controller.connectionState.toString().split('.').last}',
+                  ),
+
+                  if (isConnected && _controller.currentMtu > 0)
                     Text('MTU: ${_controller.currentMtu} bytes'),
-                  
+
                   const SizedBox(height: 20),
-                  
-                  if (_controller.connectionState == BluetoothConnectionState.connecting)
+
+                  if (isConnecting)
                     const CircularProgressIndicator()
                   else if (isDisconnected)
                     _buildReconnectButton()
                   else if (isConnected) ...[
                     _buildTopControls(),
                     const SizedBox(height: 20),
+                    ImuConfigPanel(controller: _controller),
+                    const SizedBox(height: 20),
                     _buildMainPanels(),
                   ],
-                  
+
                   const SizedBox(height: 20),
-                  
+
                   ValueListenableBuilder<String>(
                     valueListenable: _controller.logTextNotifier,
                     builder: (context, logText, child) {
@@ -133,9 +149,14 @@ class _DeviceScreenState extends State<DeviceScreen> with WidgetsBindingObserver
                           color: Colors.grey[200],
                           borderRadius: BorderRadius.circular(8),
                         ),
-                        child: Text(logText, 
+                        child: Text(
+                          logText,
                           textAlign: TextAlign.center,
-                          style: const TextStyle(fontSize: 14, fontFamily: 'monospace')),
+                          style: const TextStyle(
+                            fontSize: 14,
+                            fontFamily: 'monospace',
+                          ),
+                        ),
                       );
                     },
                   ),
@@ -144,16 +165,23 @@ class _DeviceScreenState extends State<DeviceScreen> with WidgetsBindingObserver
             ),
           ),
         );
-      }
+      },
     );
   }
 
   Widget _buildReconnectButton() {
     return Column(
       children: [
-        const Icon(Icons.signal_cellular_connected_no_internet_4_bar, size: 64, color: Colors.grey),
+        const Icon(
+          Icons.signal_cellular_connected_no_internet_4_bar,
+          size: 64,
+          color: Colors.grey,
+        ),
         const SizedBox(height: 16),
-        const Text("Связь с устройством потеряна", style: TextStyle(color: Colors.grey)),
+        const Text(
+          "Связь с устройством потеряна",
+          style: TextStyle(color: Colors.grey),
+        ),
         const SizedBox(height: 24),
         ElevatedButton.icon(
           onPressed: () => _controller.connect(),
@@ -175,18 +203,26 @@ class _DeviceScreenState extends State<DeviceScreen> with WidgetsBindingObserver
           builder: (context, isTesting, child) {
             return ToggleButtons(
               isSelected: [_isWriteMode, !_isWriteMode],
-              onPressed: isTesting ? null : (index) {
-                setState(() {
-                  _isWriteMode = index == 0;
-                  _controller.logTextNotifier.value = "";
-                });
-              },
+              onPressed: isTesting
+                  ? null
+                  : (index) {
+                      setState(() {
+                        _isWriteMode = index == 0;
+                        _controller.logTextNotifier.value = "";
+                      });
+                    },
               children: const [
-                Padding(padding: EdgeInsets.symmetric(horizontal: 16), child: Text("Write Test")),
-                Padding(padding: EdgeInsets.symmetric(horizontal: 16), child: Text("Notify Test")),
+                Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 16),
+                  child: Text("Write Test"),
+                ),
+                Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 16),
+                  child: Text("Notify Test"),
+                ),
               ],
             );
-          }
+          },
         ),
         const SizedBox(height: 20),
         Row(
@@ -196,10 +232,14 @@ class _DeviceScreenState extends State<DeviceScreen> with WidgetsBindingObserver
             const SizedBox(width: 8),
             DropdownButton<ThroughputUnit>(
               value: _selectedUnit,
-              items: ThroughputUnit.values.map((unit) => DropdownMenuItem(
-                value: unit, 
-                child: Text(unit.toString().split('.').last)
-              )).toList(),
+              items: ThroughputUnit.values
+                  .map(
+                    (unit) => DropdownMenuItem(
+                      value: unit,
+                      child: Text(unit.toString().split('.').last),
+                    ),
+                  )
+                  .toList(),
               onChanged: (v) => setState(() => _selectedUnit = v!),
             ),
           ],
@@ -223,11 +263,13 @@ class _DeviceScreenState extends State<DeviceScreen> with WidgetsBindingObserver
                     DropdownMenuItem(value: 200, child: Text("200 мс")),
                     DropdownMenuItem(value: 500, child: Text("500 мс")),
                   ],
-                  onChanged: isTesting ? null : (v) => setState(() => _updateIntervalMs = v!),
+                  onChanged: isTesting
+                      ? null
+                      : (v) => setState(() => _updateIntervalMs = v!),
                 ),
               ],
             );
-          }
+          },
         ),
       ],
     );
@@ -236,23 +278,23 @@ class _DeviceScreenState extends State<DeviceScreen> with WidgetsBindingObserver
   Widget _buildMainPanels() {
     if (_isWriteMode) {
       return WriteTestPanel(
-        controller: _controller, 
-        unit: _selectedUnit, 
-        intervalMs: _updateIntervalMs
+        controller: _controller,
+        unit: _selectedUnit,
+        intervalMs: _updateIntervalMs,
       );
     } else {
       return Column(
         children: [
           NotifyTestPanel(
-            controller: _controller, 
-            unit: _selectedUnit, 
-            intervalMs: _updateIntervalMs
+            controller: _controller,
+            unit: _selectedUnit,
+            intervalMs: _updateIntervalMs,
           ),
           const SizedBox(height: 20),
           const Divider(),
           CsvRecordingPanel(
-            csvManager: _controller.csvManager, 
-            onFormatChanged: () => setState((){})
+            csvManager: _controller.csvManager,
+            onFormatChanged: () => setState(() {}),
           ),
         ],
       );

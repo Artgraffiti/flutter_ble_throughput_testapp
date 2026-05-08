@@ -6,12 +6,12 @@ import '../models/imu_csv_format.dart';
 
 class CsvRecordingPanel extends StatelessWidget {
   final CsvManager csvManager;
-  final VoidCallback onFormatChanged; 
+  final VoidCallback onFormatChanged;
 
   const CsvRecordingPanel({
-    super.key, 
-    required this.csvManager, 
-    required this.onFormatChanged
+    super.key,
+    required this.csvManager,
+    required this.onFormatChanged,
   });
 
   @override
@@ -19,9 +19,9 @@ class CsvRecordingPanel extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: Colors.blueGrey.withOpacity(0.1),
+        color: Colors.blueGrey.withValues(alpha: 0.1),
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.blueGrey.withOpacity(0.3)),
+        border: Border.all(color: Colors.blueGrey.withValues(alpha: 0.3)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -36,9 +36,11 @@ class CsvRecordingPanel extends StatelessWidget {
           // Кнопка выбора папки
           OutlinedButton.icon(
             icon: const Icon(Icons.folder_open),
-            label: Text(csvManager.saveDirectory == null 
-                ? "Выбрать папку для сохранения" 
-                : ".../${csvManager.saveDirectory!.split('/').last}"), 
+            label: Text(
+              csvManager.saveDirectory == null
+                  ? "Выбрать папку для сохранения"
+                  : ".../${csvManager.saveDirectory!.split('/').last}",
+            ),
             onPressed: () => csvManager.pickSaveDirectory(),
           ),
           const SizedBox(height: 12),
@@ -53,18 +55,24 @@ class CsvRecordingPanel extends StatelessWidget {
                 builder: (context, isRecording, child) {
                   return DropdownButton<ImuCsvFormat>(
                     value: csvManager.selectedCsvFormat,
-                    onChanged: isRecording ? null : (v) {
-                      if (v != null) {
-                        csvManager.selectedCsvFormat = v;
-                        onFormatChanged(); // Обновление UI снаружи
-                      }
-                    },
-                    items: ImuCsvFormat.values.map((format) => DropdownMenuItem(
-                      value: format,
-                      child: Text(format.label),
-                    )).toList(),
+                    onChanged: isRecording
+                        ? null
+                        : (v) {
+                            if (v != null) {
+                              csvManager.selectedCsvFormat = v;
+                              onFormatChanged(); // Обновление UI снаружи
+                            }
+                          },
+                    items: ImuCsvFormat.values
+                        .map(
+                          (format) => DropdownMenuItem(
+                            value: format,
+                            child: Text(format.label),
+                          ),
+                        )
+                        .toList(),
                   );
-                }
+                },
               ),
             ],
           ),
@@ -79,14 +87,20 @@ class CsvRecordingPanel extends StatelessWidget {
                   Expanded(
                     child: ElevatedButton.icon(
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: isRecording ? Colors.red : Colors.green,
+                        backgroundColor: isRecording
+                            ? Colors.red
+                            : Colors.green,
                         foregroundColor: Colors.white,
                         padding: const EdgeInsets.symmetric(vertical: 12),
                       ),
-                      icon: Icon(isRecording ? Icons.stop : Icons.fiber_manual_record),
-                      label: Text(isRecording ? "Остановить запись" : "Начать запись"),
-                      onPressed: csvManager.saveDirectory == null 
-                          ? null 
+                      icon: Icon(
+                        isRecording ? Icons.stop : Icons.fiber_manual_record,
+                      ),
+                      label: Text(
+                        isRecording ? "Остановить запись" : "Начать запись",
+                      ),
+                      onPressed: csvManager.saveDirectory == null
+                          ? null
                           : () => csvManager.toggleCsvRecording(),
                     ),
                   ),
@@ -96,16 +110,16 @@ class CsvRecordingPanel extends StatelessWidget {
                       valueListenable: csvManager.recordedLinesNotifier,
                       builder: (context, lines, child) {
                         return Text(
-                          "Строк:\n$lines", 
+                          "Строк:\n$lines",
                           textAlign: TextAlign.center,
                           style: const TextStyle(fontWeight: FontWeight.bold),
                         );
-                      }
+                      },
                     ),
-                  ]
+                  ],
                 ],
               );
-            }
+            },
           ),
         ],
       ),
