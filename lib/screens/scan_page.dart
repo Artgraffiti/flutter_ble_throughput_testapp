@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:ble_throughput/screens/device_screen.dart';
 import 'package:ble_throughput/widgets/scan_result_tile.dart';
+import 'package:ble_throughput/widgets/theme_mode_menu_button.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -60,7 +61,9 @@ class _ScanPageState extends State<ScanPage> {
       ].request();
     } else if (Platform.isWindows) {
       // На Windows разрешения управляются системой, но полезно знать, что мы тут
-      debugPrint("Запущено на Windows. Проверьте, что Bluetooth включен в настройках ПК.");
+      debugPrint(
+        "Запущено на Windows. Проверьте, что Bluetooth включен в настройках ПК.",
+      );
     }
   }
 
@@ -90,9 +93,12 @@ class _ScanPageState extends State<ScanPage> {
 
   @override
   Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+
     return Scaffold(
       appBar: AppBar(
         title: const Text('BLE Scanner'),
+        actions: const [ThemeModeMenuButton()],
       ),
       body: Column(
         children: [
@@ -125,9 +131,11 @@ class _ScanPageState extends State<ScanPage> {
                     result: result,
                     onTap: () {
                       _stopScan();
-                      Navigator.of(context).push(MaterialPageRoute(
-                        builder: (context) => DeviceScreen(device: device),
-                      ));
+                      Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (context) => DeviceScreen(device: device),
+                        ),
+                      );
                     },
                   );
                 },
@@ -138,7 +146,8 @@ class _ScanPageState extends State<ScanPage> {
       ),
       floatingActionButton: FloatingActionButton(
         onPressed: _isScanning ? _stopScan : _startScan,
-        backgroundColor: _isScanning ? Colors.red : Colors.blue,
+        backgroundColor: _isScanning ? colors.error : colors.primary,
+        foregroundColor: _isScanning ? colors.onError : colors.onPrimary,
         child: Icon(_isScanning ? Icons.stop : Icons.search),
       ),
     );

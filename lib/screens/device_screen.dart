@@ -7,6 +7,7 @@ import '../controllers/device_controller.dart';
 import '../models/throughput_unit.dart';
 import '../widgets/test_panels.dart';
 import '../widgets/csv_panel.dart';
+import '../widgets/theme_mode_menu_button.dart';
 
 class DeviceScreen extends StatefulWidget {
   final BluetoothDevice device;
@@ -72,6 +73,8 @@ class _DeviceScreenState extends State<DeviceScreen>
 
   @override
   Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+
     return ListenableBuilder(
       listenable: _controller,
       builder: (context, child) {
@@ -102,6 +105,7 @@ class _DeviceScreenState extends State<DeviceScreen>
                   ),
                 ),
               ),
+              const ThemeModeMenuButton(),
               if (isConnected)
                 IconButton(
                   icon: const Icon(Icons.bluetooth_disabled),
@@ -146,7 +150,7 @@ class _DeviceScreenState extends State<DeviceScreen>
                         width: double.infinity,
                         padding: const EdgeInsets.all(12),
                         decoration: BoxDecoration(
-                          color: Colors.grey[200],
+                          color: colors.surfaceContainerHighest,
                           borderRadius: BorderRadius.circular(8),
                         ),
                         child: Text(
