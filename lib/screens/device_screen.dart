@@ -26,6 +26,11 @@ class _DeviceScreenState extends State<DeviceScreen>
   bool _isWriteMode = true;
   ThroughputUnit _selectedUnit = ThroughputUnit.kilobits;
   int _updateIntervalMs = 33;
+  int? _selectedTestDurationMinutes;
+
+  Duration? get _selectedTestDuration => _selectedTestDurationMinutes == null
+      ? null
+      : Duration(minutes: _selectedTestDurationMinutes!);
 
   // Измерение FPS
   late Ticker _fpsTicker;
@@ -252,24 +257,66 @@ class _DeviceScreenState extends State<DeviceScreen>
         ValueListenableBuilder<bool>(
           valueListenable: _controller.isTestingNotifier,
           builder: (context, isTesting, child) {
-            return Row(
-              mainAxisAlignment: MainAxisAlignment.center,
+            return Wrap(
+              alignment: WrapAlignment.center,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              spacing: 16,
+              runSpacing: 10,
               children: [
-                const Text("Интервал UI: "),
-                const SizedBox(width: 8),
-                DropdownButton<int>(
-                  value: _updateIntervalMs,
-                  items: const [
-                    DropdownMenuItem(value: 16, child: Text("16 мс (~60 FPS)")),
-                    DropdownMenuItem(value: 33, child: Text("33 мс (~30 FPS)")),
-                    DropdownMenuItem(value: 50, child: Text("50 мс")),
-                    DropdownMenuItem(value: 100, child: Text("100 мс")),
-                    DropdownMenuItem(value: 200, child: Text("200 мс")),
-                    DropdownMenuItem(value: 500, child: Text("500 мс")),
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Text("Интервал UI: "),
+                    const SizedBox(width: 8),
+                    DropdownButton<int>(
+                      value: _updateIntervalMs,
+                      items: const [
+                        DropdownMenuItem(
+                          value: 16,
+                          child: Text("16 мс (~60 FPS)"),
+                        ),
+                        DropdownMenuItem(
+                          value: 33,
+                          child: Text("33 мс (~30 FPS)"),
+                        ),
+                        DropdownMenuItem(value: 50, child: Text("50 мс")),
+                        DropdownMenuItem(value: 100, child: Text("100 мс")),
+                        DropdownMenuItem(value: 200, child: Text("200 мс")),
+                        DropdownMenuItem(value: 500, child: Text("500 мс")),
+                      ],
+                      onChanged: isTesting
+                          ? null
+                          : (v) => setState(() => _updateIntervalMs = v!),
+                    ),
                   ],
-                  onChanged: isTesting
-                      ? null
-                      : (v) => setState(() => _updateIntervalMs = v!),
+                ),
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Text("Длительность: "),
+                    const SizedBox(width: 8),
+                    DropdownButton<int?>(
+                      value: _selectedTestDurationMinutes,
+                      hint: const Text("Ручной"),
+                      items: const [
+                        DropdownMenuItem<int?>(
+                          value: null,
+                          child: Text("Ручной"),
+                        ),
+                        DropdownMenuItem(value: 1, child: Text("1 мин")),
+                        DropdownMenuItem(value: 5, child: Text("5 мин")),
+                        DropdownMenuItem(value: 10, child: Text("10 мин")),
+                        DropdownMenuItem(value: 20, child: Text("20 мин")),
+                        DropdownMenuItem(value: 30, child: Text("30 мин")),
+                        DropdownMenuItem(value: 60, child: Text("60 мин")),
+                      ],
+                      onChanged: isTesting
+                          ? null
+                          : (v) => setState(
+                              () => _selectedTestDurationMinutes = v,
+                            ),
+                    ),
+                  ],
                 ),
               ],
             );
@@ -285,6 +332,7 @@ class _DeviceScreenState extends State<DeviceScreen>
         controller: _controller,
         unit: _selectedUnit,
         intervalMs: _updateIntervalMs,
+        duration: _selectedTestDuration,
       );
     } else {
       return Column(
@@ -293,6 +341,7 @@ class _DeviceScreenState extends State<DeviceScreen>
             controller: _controller,
             unit: _selectedUnit,
             intervalMs: _updateIntervalMs,
+            duration: _selectedTestDuration,
           ),
           const SizedBox(height: 20),
           const Divider(),

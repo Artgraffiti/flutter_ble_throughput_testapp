@@ -10,12 +10,14 @@ class WriteTestPanel extends StatelessWidget {
   final DeviceController controller;
   final ThroughputUnit unit;
   final int intervalMs;
+  final Duration? duration;
 
   const WriteTestPanel({
     super.key,
     required this.controller,
     required this.unit,
     required this.intervalMs,
+    required this.duration,
   });
 
   @override
@@ -52,7 +54,11 @@ class WriteTestPanel extends StatelessWidget {
             return ElevatedButton(
               onPressed: isTesting
                   ? null
-                  : () => controller.runWriteTest(unit, intervalMs),
+                  : () => controller.runWriteTest(
+                      unit,
+                      intervalMs,
+                      duration: duration,
+                    ),
               child: isTesting
                   ? const SizedBox(
                       width: 20,
@@ -255,12 +261,14 @@ class NotifyTestPanel extends StatelessWidget {
   final DeviceController controller;
   final ThroughputUnit unit;
   final int intervalMs;
+  final Duration? duration;
 
   const NotifyTestPanel({
     super.key,
     required this.controller,
     required this.unit,
     required this.intervalMs,
+    required this.duration,
   });
 
   @override
@@ -308,8 +316,11 @@ class NotifyTestPanel extends StatelessWidget {
           valueListenable: controller.isTestingNotifier,
           builder: (context, isTesting, child) {
             return ElevatedButton(
-              onPressed: () =>
-                  controller.toggleNotificationTest(unit, intervalMs),
+              onPressed: () => controller.toggleNotificationTest(
+                unit,
+                intervalMs,
+                duration: duration,
+              ),
               style: ElevatedButton.styleFrom(
                 backgroundColor: isTesting
                     ? Colors.red

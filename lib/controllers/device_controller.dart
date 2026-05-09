@@ -39,7 +39,9 @@ class DeviceController extends ChangeNotifier {
   StreamSubscription<BluetoothConnectionState>? _connectionSub;
   StreamSubscription? _notifySub;
   Timer? _notifyUpdateTimer;
+  Timer? _testDurationTimer;
   final Stopwatch _notifyStopwatch = Stopwatch();
+  Duration? _activeNotifyDuration;
 
   int _notifyBytesReceived = 0;
   int _notifyPacketCount = 0;
@@ -205,7 +207,11 @@ class DeviceController extends ChangeNotifier {
     }
   }
 
-  Future<void> runWriteTest(ThroughputUnit unit, int updateIntervalMs) async {
+  Future<void> runWriteTest(
+    ThroughputUnit unit,
+    int updateIntervalMs, {
+    Duration? duration,
+  }) async {
     if (selectedCharacteristic == null) return;
 
     isTestingNotifier.value = true;
@@ -216,7 +222,6 @@ class DeviceController extends ChangeNotifier {
       int packetSize = (currentMtu > 3) ? currentMtu - 3 : 20;
       List<int> data = List.filled(packetSize, 0xAA);
       int packetsToSend = 1000;
-      int totalBytes = packetsToSend * packetSize;
 
       bool withoutResponse =
           selectedCharacteristic!.properties.writeWithoutResponse;
@@ -224,14 +229,21 @@ class DeviceController extends ChangeNotifier {
 
       Stopwatch stopwatch = Stopwatch()..start();
       int bytesSent = 0;
+      int packetsSent = 0;
       double lastUiUpdate = 0;
+      final durationSeconds = duration?.inMilliseconds == null
+          ? null
+          : duration!.inMilliseconds / 1000.0;
 
-      for (int i = 0; i < packetsToSend; i++) {
+      while (duration == null || stopwatch.elapsed < duration) {
+        if (duration == null && packetsSent >= packetsToSend) break;
+
         await selectedCharacteristic!.write(
           data,
           withoutResponse: withoutResponse,
         );
         bytesSent += packetSize;
+        packetsSent++;
 
         double now = stopwatch.elapsedMilliseconds / 1000.0;
 
@@ -240,8 +252,12 @@ class DeviceController extends ChangeNotifier {
         }
 
         if (now - lastUiUpdate >= updateIntervalMs / 1000.0) {
+          final progress = durationSeconds == null
+              ? packetsSent / packetsToSend
+              : (now / durationSeconds).clamp(0.0, 1.0);
           logTextNotifier.value =
-              "Отправка... ${(i / packetsToSend * 100).toStringAsFixed(0)}%\n"
+              "Отправка... ${(progress * 100).toStringAsFixed(0)}%\n"
+              "Пакетов: $packetsSent\n"
               "Мгновенная: ${unit.formatSpeed(_instantSpeed)}\n"
               "Максимальная: ${unit.formatSpeed(_maxSpeed)}";
           lastUiUpdate = now;
@@ -250,10 +266,10 @@ class DeviceController extends ChangeNotifier {
 
       stopwatch.stop();
       double seconds = stopwatch.elapsedMilliseconds / 1000.0;
-      double speedBytesPerSec = totalBytes / seconds;
+      double speedBytesPerSec = bytesSent / seconds;
 
       logTextNotifier.value =
-          "Тип: $writeType\nОтправлено: $totalBytes байт\nВремя: ${seconds.toStringAsFixed(2)} сек\nСредняя: ${unit.formatSpeed(speedBytesPerSec)}\nМаксимальная: ${unit.formatSpeed(_maxSpeed)}";
+          "Тип: $writeType\nОтправлено: $bytesSent байт\nПакетов: $packetsSent\nВремя: ${seconds.toStringAsFixed(2)} сек\nСредняя: ${unit.formatSpeed(speedBytesPerSec)}\nМаксимальная: ${unit.formatSpeed(_maxSpeed)}";
     } catch (e) {
       logTextNotifier.value = "Ошибка теста: $e";
     } finally {
@@ -263,26 +279,17 @@ class DeviceController extends ChangeNotifier {
 
   Future<void> toggleNotificationTest(
     ThroughputUnit unit,
-    int updateIntervalMs,
-  ) async {
+    int updateIntervalMs, {
+    Duration? duration,
+  }) async {
     if (selectedNotifyCharacteristic == null) return;
 
     if (isTestingNotifier.value) {
-      _notifyUpdateTimer?.cancel();
-      _notifySub?.cancel();
-      _notifyStopwatch.stop();
-
-      try {
-        await selectedNotifyCharacteristic!.setNotifyValue(false);
-      } catch (e) {
-        debugPrint("Ошибка отключения уведомлений: $e");
-      }
-
-      isTestingNotifier.value = false;
-      _updateNotifyStats(unit, finalUpdate: true);
+      await _stopNotificationTest(unit);
     } else {
       isTestingNotifier.value = true;
       _resetMetrics();
+      _activeNotifyDuration = duration;
       logTextNotifier.value = "Ожидание данных...";
 
       try {
@@ -312,11 +319,38 @@ class DeviceController extends ChangeNotifier {
             _updateNotifyStats(unit);
           },
         );
+
+        if (duration != null) {
+          _testDurationTimer = Timer(duration, () {
+            _stopNotificationTest(unit);
+          });
+        }
       } catch (e) {
+        _testDurationTimer?.cancel();
+        _testDurationTimer = null;
+        _activeNotifyDuration = null;
         isTestingNotifier.value = false;
         logTextNotifier.value = "Ошибка запуска Notify: $e";
       }
     }
+  }
+
+  Future<void> _stopNotificationTest(ThroughputUnit unit) async {
+    _testDurationTimer?.cancel();
+    _testDurationTimer = null;
+    _activeNotifyDuration = null;
+    _notifyUpdateTimer?.cancel();
+    _notifySub?.cancel();
+    _notifyStopwatch.stop();
+
+    try {
+      await selectedNotifyCharacteristic!.setNotifyValue(false);
+    } catch (e) {
+      debugPrint("Ошибка отключения уведомлений: $e");
+    }
+
+    isTestingNotifier.value = false;
+    _updateNotifyStats(unit, finalUpdate: true);
   }
 
   void _resetMetrics() {
@@ -361,6 +395,9 @@ class DeviceController extends ChangeNotifier {
     }
 
     double avgSpeed = _notifyBytesReceived / now;
+    final durationText = _activeNotifyDuration == null
+        ? ""
+        : "\nДлительность теста: ${_activeNotifyDuration!.inMinutes} мин";
     String hexData = _lastPacketData.isEmpty
         ? "Нет данных"
         : _lastPacketData
@@ -381,7 +418,7 @@ class DeviceController extends ChangeNotifier {
     }
 
     logTextNotifier.value =
-        "Получено: $_notifyBytesReceived байт\nВремя: ${now.toStringAsFixed(2)} сек\nМгновенная: ${unit.formatSpeed(_instantSpeed)}\nСредняя: ${unit.formatSpeed(avgSpeed)}\nМаксимальная: ${unit.formatSpeed(_maxSpeed)}\n\nПоследний пакет (№$_notifyPacketCount, ${_lastPacketData.length} байт):\n$hexData$decodedImuText";
+        "Получено: $_notifyBytesReceived байт\nВремя: ${now.toStringAsFixed(2)} сек$durationText\nМгновенная: ${unit.formatSpeed(_instantSpeed)}\nСредняя: ${unit.formatSpeed(avgSpeed)}\nМаксимальная: ${unit.formatSpeed(_maxSpeed)}\n\nПоследний пакет (№$_notifyPacketCount, ${_lastPacketData.length} байт):\n$hexData$decodedImuText";
   }
 
   void _decodeImuPacket(List<int> data, {required bool writeCsv}) {
@@ -405,6 +442,7 @@ class DeviceController extends ChangeNotifier {
     _connectionSub?.cancel();
     _notifySub?.cancel();
     _notifyUpdateTimer?.cancel();
+    _testDurationTimer?.cancel();
     logTextNotifier.dispose();
     isTestingNotifier.dispose();
     telemetryNotifier.dispose();

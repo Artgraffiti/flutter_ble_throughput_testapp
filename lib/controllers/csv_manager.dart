@@ -64,11 +64,11 @@ class CsvManager {
 
       if (selectedCsvFormat == ImuCsvFormat.raw) {
         _csvSink?.writeln(
-          "timestamp_us,acc_x_raw,acc_y_raw,acc_z_raw,gyro_x_raw,gyro_y_raw,gyro_z_raw",
+          "timestamp_us,imu_index,acc_x_raw,acc_y_raw,acc_z_raw,gyro_x_raw,gyro_y_raw,gyro_z_raw",
         );
       } else {
         _csvSink?.writeln(
-          "timestamp_us,acc_x_ms2,acc_y_ms2,acc_z_ms2,gyro_x_rads,gyro_y_rads,gyro_z_rads",
+          "timestamp_us,imu_index,acc_x_ms2,acc_y_ms2,acc_z_ms2,gyro_x_rads,gyro_y_rads,gyro_z_rads",
         );
       }
 
@@ -105,14 +105,15 @@ class CsvManager {
     if (_csvSink == null || !isRecording) return;
 
     for (final packet in packets) {
-      for (var imu in packet.imu) {
+      for (var imuIndex = 0; imuIndex < packet.imu.length; imuIndex++) {
+        final imu = packet.imu[imuIndex];
         if (selectedCsvFormat == ImuCsvFormat.raw) {
           _pendingCsvRows.writeln(
-            "${packet.timestamp},${imu.rawAcc[0]},${imu.rawAcc[1]},${imu.rawAcc[2]},${imu.rawGyro[0]},${imu.rawGyro[1]},${imu.rawGyro[2]}",
+            "${packet.timestamp},$imuIndex,${imu.rawAcc[0]},${imu.rawAcc[1]},${imu.rawAcc[2]},${imu.rawGyro[0]},${imu.rawGyro[1]},${imu.rawGyro[2]}",
           );
         } else {
           _pendingCsvRows.writeln(
-            "${packet.timestamp},${imu.accMs2[0]},${imu.accMs2[1]},${imu.accMs2[2]},${imu.gyroRads[0]},${imu.gyroRads[1]},${imu.gyroRads[2]}",
+            "${packet.timestamp},$imuIndex,${imu.accMs2[0]},${imu.accMs2[1]},${imu.accMs2[2]},${imu.gyroRads[0]},${imu.gyroRads[1]},${imu.gyroRads[2]}",
           );
         }
         _recordedLinesCount++;
