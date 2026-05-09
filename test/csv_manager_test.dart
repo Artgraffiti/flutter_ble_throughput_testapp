@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:ble_throughput/controllers/csv_manager.dart';
 import 'package:ble_throughput/models/imu_csv_format.dart';
 import 'package:ble_throughput/models/imu_packet.dart';
+import 'package:ble_throughput/models/imu_sensor_config.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -53,6 +54,34 @@ void main() {
     );
     expect(lines[1].startsWith('123,0,'), isTrue);
     expect(lines[2].startsWith('123,1,'), isTrue);
+
+    manager.dispose();
+    logNotifier.dispose();
+    await tempDir.delete(recursive: true);
+  });
+
+  test('includes imu config in csv filename', () async {
+    final tempDir = await Directory.systemTemp.createTemp('csv_manager_test');
+    final logNotifier = ValueNotifier<String>('');
+    final manager = CsvManager(
+      logNotifier,
+      imuConfigProvider: () => const ImuSensorConfig(
+        accelOdrHz: 120,
+        accelRangeG: 16,
+        gyroOdrHz: 240,
+        gyroRangeDps: 2000,
+      ),
+    )..saveDirectory = tempDir.path;
+
+    await manager.startCsvRecording();
+    await manager.stopCsvRecording();
+
+    final file = tempDir.listSync().whereType<File>().single;
+
+    expect(
+      file.uri.pathSegments.last,
+      contains('acc120hz_16g_gyro240hz_2000dps'),
+    );
 
     manager.dispose();
     logNotifier.dispose();

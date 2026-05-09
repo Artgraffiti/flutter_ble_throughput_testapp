@@ -71,4 +71,17 @@ class ImuSensorConfig {
       gyroRangeDps: data.getUint16(6, Endian.little),
     );
   }
+
+  @override
+  bool operator ==(Object other) {
+    return other is ImuSensorConfig &&
+        other.accelOdrHz == accelOdrHz &&
+        other.accelRangeG == accelRangeG &&
+        other.gyroOdrHz == gyroOdrHz &&
+        other.gyroRangeDps == gyroRangeDps;
+  }
+
+  @override
+  int get hashCode =>
+      Object.hash(accelOdrHz, accelRangeG, gyroOdrHz, gyroRangeDps);
 }

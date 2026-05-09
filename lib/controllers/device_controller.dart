@@ -31,6 +31,7 @@ class DeviceController extends ChangeNotifier {
   BluetoothCharacteristic? imuConfigCharacteristic;
   ImuSensorConfig imuConfig = ImuSensorConfig.defaults;
   bool isApplyingImuConfig = false;
+  bool isAutoTesting = false;
 
   final ValueNotifier<String> logTextNotifier = ValueNotifier<String>("");
   final ValueNotifier<bool> isTestingNotifier = ValueNotifier<bool>(false);
@@ -42,6 +43,8 @@ class DeviceController extends ChangeNotifier {
   Timer? _testDurationTimer;
   final Stopwatch _notifyStopwatch = Stopwatch();
   Duration? _activeNotifyDuration;
+  bool _autoTestCancelRequested = false;
+  String _autoTestProgressText = "";
 
   int _notifyBytesReceived = 0;
   int _notifyPacketCount = 0;
@@ -61,7 +64,10 @@ class DeviceController extends ChangeNotifier {
   final double _speedCalcInterval = 0.5;
 
   DeviceController(this.device) {
-    csvManager = CsvManager(logTextNotifier);
+    csvManager = CsvManager(
+      logTextNotifier,
+      imuConfigProvider: () => imuConfig,
+    );
     _init();
   }
 
@@ -182,11 +188,15 @@ class DeviceController extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> applyImuConfig(ImuSensorConfig config) async {
+  Future<bool> applyImuConfig(ImuSensorConfig config) async {
     final characteristic = imuConfigCharacteristic;
     if (characteristic == null) {
       logTextNotifier.value = "IMU config характеристика не найдена";
-      return;
+      return false;
+    }
+
+    if (config == imuConfig) {
+      return true;
     }
 
     isApplyingImuConfig = true;
@@ -199,8 +209,10 @@ class DeviceController extends ChangeNotifier {
           "IMU config применён: ACC ${config.accelOdrHz} Hz / ${config.accelRangeG} g, "
           "GYRO ${config.gyroOdrHz} Hz / ${config.gyroRangeDps} dps";
       await readImuConfig();
+      return true;
     } catch (e) {
       logTextNotifier.value = "Ошибка записи IMU config: $e";
+      return false;
     } finally {
       isApplyingImuConfig = false;
       notifyListeners();
@@ -282,56 +294,75 @@ class DeviceController extends ChangeNotifier {
     int updateIntervalMs, {
     Duration? duration,
   }) async {
-    if (selectedNotifyCharacteristic == null) return;
+    if (selectedNotifyCharacteristic == null || isAutoTesting) return;
 
     if (isTestingNotifier.value) {
       await _stopNotificationTest(unit);
     } else {
-      isTestingNotifier.value = true;
-      _resetMetrics();
-      _activeNotifyDuration = duration;
-      logTextNotifier.value = "Ожидание данных...";
+      await _startNotificationTest(
+        unit,
+        updateIntervalMs,
+        duration: duration,
+        scheduleStop: true,
+      );
+    }
+  }
 
-      try {
-        await selectedNotifyCharacteristic!.setNotifyValue(true);
-        _notifyStopwatch.reset();
-        _notifyStopwatch.start();
+  Future<bool> _startNotificationTest(
+    ThroughputUnit unit,
+    int updateIntervalMs, {
+    Duration? duration,
+    required bool scheduleStop,
+  }) async {
+    if (selectedNotifyCharacteristic == null || isTestingNotifier.value) {
+      return false;
+    }
 
-        _notifySub = selectedNotifyCharacteristic!.onValueReceived.listen((
-          data,
-        ) {
-          _notifyBytesReceived += data.length;
-          _notifyPacketCount++;
-          _lastPacketData = data;
+    isTestingNotifier.value = true;
+    _resetMetrics();
+    _activeNotifyDuration = duration;
+    logTextNotifier.value = "Ожидание данных...";
 
-          if (selectedNotifyCharacteristic?.uuid.toString() == _dpImuUuid) {
-            if (csvManager.isRecording) {
-              _decodeImuPacket(data, writeCsv: true);
-            } else {
-              _latestNotifyData = data;
-            }
+    try {
+      await selectedNotifyCharacteristic!.setNotifyValue(true);
+      _notifyStopwatch.reset();
+      _notifyStopwatch.start();
+
+      _notifySub = selectedNotifyCharacteristic!.onValueReceived.listen((data) {
+        _notifyBytesReceived += data.length;
+        _notifyPacketCount++;
+        _lastPacketData = data;
+
+        if (selectedNotifyCharacteristic?.uuid.toString() == _dpImuUuid) {
+          if (csvManager.isRecording) {
+            _decodeImuPacket(data, writeCsv: true);
+          } else {
+            _latestNotifyData = data;
           }
-        });
-
-        _notifyUpdateTimer = Timer.periodic(
-          Duration(milliseconds: updateIntervalMs),
-          (timer) {
-            _updateNotifyStats(unit);
-          },
-        );
-
-        if (duration != null) {
-          _testDurationTimer = Timer(duration, () {
-            _stopNotificationTest(unit);
-          });
         }
-      } catch (e) {
-        _testDurationTimer?.cancel();
-        _testDurationTimer = null;
-        _activeNotifyDuration = null;
-        isTestingNotifier.value = false;
-        logTextNotifier.value = "Ошибка запуска Notify: $e";
+      });
+
+      _notifyUpdateTimer = Timer.periodic(
+        Duration(milliseconds: updateIntervalMs),
+        (timer) {
+          _updateNotifyStats(unit);
+        },
+      );
+
+      if (duration != null && scheduleStop) {
+        _testDurationTimer = Timer(duration, () {
+          _stopNotificationTest(unit);
+        });
       }
+
+      return true;
+    } catch (e) {
+      _testDurationTimer?.cancel();
+      _testDurationTimer = null;
+      _activeNotifyDuration = null;
+      isTestingNotifier.value = false;
+      logTextNotifier.value = "Ошибка запуска Notify: $e";
+      return false;
     }
   }
 
@@ -351,6 +382,195 @@ class DeviceController extends ChangeNotifier {
 
     isTestingNotifier.value = false;
     _updateNotifyStats(unit, finalUpdate: true);
+  }
+
+  Future<void> runImuRangeAutoTest(
+    ThroughputUnit unit,
+    int updateIntervalMs, {
+    required Duration? duration,
+  }) async {
+    if (isAutoTesting || isTestingNotifier.value || isApplyingImuConfig) {
+      return;
+    }
+    if (duration == null) {
+      logTextNotifier.value =
+          "Для автотеста выберите фиксированную длительность.";
+      return;
+    }
+    if (selectedNotifyCharacteristic == null ||
+        selectedNotifyCharacteristic!.uuid.toString() != _dpImuUuid) {
+      logTextNotifier.value =
+          "Для автотеста выберите IMU Notify характеристику";
+      return;
+    }
+    if (imuConfigCharacteristic == null) {
+      logTextNotifier.value = "IMU config характеристика не найдена";
+      return;
+    }
+    if (csvManager.saveDirectory == null) {
+      logTextNotifier.value = "Для автотеста выберите папку CSV.";
+      return;
+    }
+    if (csvManager.isRecording) {
+      logTextNotifier.value = "Остановите текущую CSV запись перед автотестом.";
+      return;
+    }
+
+    final originalConfig = imuConfig;
+    final steps = _buildImuRangeAutoTestSteps(originalConfig);
+    _autoTestCancelRequested = false;
+    isAutoTesting = true;
+    notifyListeners();
+
+    try {
+      for (var index = 0; index < steps.length; index++) {
+        if (_autoTestCancelRequested) break;
+
+        final step = steps[index];
+        _updateAutoTestProgress(
+          stepIndex: index,
+          totalSteps: steps.length,
+          stepTitle: step.title,
+          stepProgress: 0,
+        );
+
+        final applied = await applyImuConfig(step.config);
+        if (!applied || _autoTestCancelRequested) break;
+
+        await Future<void>.delayed(const Duration(milliseconds: 150));
+        if (_autoTestCancelRequested) break;
+
+        final csvStarted = await csvManager.startCsvRecording(
+          config: step.config,
+          label: step.filenameLabel,
+        );
+        if (!csvStarted || _autoTestCancelRequested) break;
+
+        final notifyStarted = await _startNotificationTest(
+          unit,
+          updateIntervalMs,
+          duration: duration,
+          scheduleStop: false,
+        );
+        if (!notifyStarted) {
+          await csvManager.stopCsvRecording();
+          break;
+        }
+
+        await _waitAutoTestDuration(
+          duration,
+          stepIndex: index,
+          totalSteps: steps.length,
+          stepTitle: step.title,
+        );
+        await _stopNotificationTest(unit);
+        await csvManager.stopCsvRecording();
+      }
+    } finally {
+      if (isTestingNotifier.value) {
+        await _stopNotificationTest(unit);
+      }
+      if (csvManager.isRecording) {
+        await csvManager.stopCsvRecording();
+      }
+
+      await applyImuConfig(originalConfig);
+      isAutoTesting = false;
+      _autoTestCancelRequested = false;
+      _autoTestProgressText = "";
+      notifyListeners();
+
+      logTextNotifier.value =
+          "Автотест завершён. Исходные настройки IMU восстановлены.";
+    }
+  }
+
+  void stopImuRangeAutoTest() {
+    _autoTestCancelRequested = true;
+    logTextNotifier.value = "Остановка автотеста...";
+  }
+
+  void _updateAutoTestProgress({
+    required int stepIndex,
+    required int totalSteps,
+    required String stepTitle,
+    required double stepProgress,
+  }) {
+    final clampedStepProgress = stepProgress.clamp(0.0, 1.0);
+    final totalProgress = ((stepIndex + clampedStepProgress) / totalSteps)
+        .clamp(0.0, 1.0);
+    _autoTestProgressText =
+        "Автотест: ${(totalProgress * 100).toStringAsFixed(1)}%\n"
+        "Шаг ${stepIndex + 1}/$totalSteps: $stepTitle "
+        "(${(clampedStepProgress * 100).toStringAsFixed(0)}%)";
+    logTextNotifier.value = _autoTestProgressText;
+  }
+
+  List<_ImuRangeAutoTestStep> _buildImuRangeAutoTestSteps(
+    ImuSensorConfig baseConfig,
+  ) {
+    final steps = <_ImuRangeAutoTestStep>[];
+    final seenConfigs = <String>{};
+
+    void addStep(_ImuRangeAutoTestStep step) {
+      final key = '${step.config.accelRangeG}:${step.config.gyroRangeDps}';
+      if (seenConfigs.add(key)) {
+        steps.add(step);
+      }
+    }
+
+    for (final range in ImuSensorConfig.accelRangeOptions) {
+      addStep(
+        _ImuRangeAutoTestStep(
+          title: 'ACC range $range g',
+          filenameLabel: 'auto_acc_${range}g',
+          config: baseConfig.copyWith(accelRangeG: range),
+        ),
+      );
+    }
+
+    for (final range in ImuSensorConfig.gyroRangeOptions) {
+      addStep(
+        _ImuRangeAutoTestStep(
+          title: 'GYRO range $range dps',
+          filenameLabel: 'auto_gyro_${range}dps',
+          config: baseConfig.copyWith(gyroRangeDps: range),
+        ),
+      );
+    }
+
+    return steps;
+  }
+
+  Future<void> _waitAutoTestDuration(
+    Duration duration, {
+    required int stepIndex,
+    required int totalSteps,
+    required String stepTitle,
+  }) async {
+    final stopwatch = Stopwatch()..start();
+
+    while (!_autoTestCancelRequested && stopwatch.elapsed < duration) {
+      _updateAutoTestProgress(
+        stepIndex: stepIndex,
+        totalSteps: totalSteps,
+        stepTitle: stepTitle,
+        stepProgress: stopwatch.elapsedMilliseconds / duration.inMilliseconds,
+      );
+
+      final remaining = duration - stopwatch.elapsed;
+      final delay = remaining > const Duration(milliseconds: 250)
+          ? const Duration(milliseconds: 250)
+          : remaining;
+      await Future<void>.delayed(delay);
+    }
+
+    _updateAutoTestProgress(
+      stepIndex: stepIndex,
+      totalSteps: totalSteps,
+      stepTitle: stepTitle,
+      stepProgress: 1,
+    );
   }
 
   void _resetMetrics() {
@@ -412,17 +632,20 @@ class DeviceController extends ChangeNotifier {
           "Декодировано IMU-пакетов: $_decodedImuPacketCount\n"
           "Некорректных notify: $_invalidImuPacketCount"
           "${_lastInvalidImuPacketLength > 0 ? ' (последняя длина $_lastInvalidImuPacketLength байт)' : ''}\n"
-          "Снапшот 0 (СИ):\n"
+          "Снапшот 0 (СИ, ACC ±${_lastImuPacket!.config.accelRangeG}g, GYRO ±${_lastImuPacket!.config.gyroRangeDps}dps):\n"
           "ACC: x=${imu.accMs2[0].toStringAsFixed(2)}, y=${imu.accMs2[1].toStringAsFixed(2)}, z=${imu.accMs2[2].toStringAsFixed(2)} [m/s^2]\n"
           "GYR: x=${imu.gyroRads[0].toStringAsFixed(2)}, y=${imu.gyroRads[1].toStringAsFixed(2)}, z=${imu.gyroRads[2].toStringAsFixed(2)} [rad/s]\n";
     }
 
+    final autoTestPrefix = _autoTestProgressText.isEmpty
+        ? ""
+        : "$_autoTestProgressText\n\n";
     logTextNotifier.value =
-        "Получено: $_notifyBytesReceived байт\nВремя: ${now.toStringAsFixed(2)} сек$durationText\nМгновенная: ${unit.formatSpeed(_instantSpeed)}\nСредняя: ${unit.formatSpeed(avgSpeed)}\nМаксимальная: ${unit.formatSpeed(_maxSpeed)}\n\nПоследний пакет (№$_notifyPacketCount, ${_lastPacketData.length} байт):\n$hexData$decodedImuText";
+        "$autoTestPrefixПолучено: $_notifyBytesReceived байт\nВремя: ${now.toStringAsFixed(2)} сек$durationText\nМгновенная: ${unit.formatSpeed(_instantSpeed)}\nСредняя: ${unit.formatSpeed(avgSpeed)}\nМаксимальная: ${unit.formatSpeed(_maxSpeed)}\n\nПоследний пакет (№$_notifyPacketCount, ${_lastPacketData.length} байт):\n$hexData$decodedImuText";
   }
 
   void _decodeImuPacket(List<int> data, {required bool writeCsv}) {
-    final packet = DpImuPacket.fromBytes(data);
+    final packet = DpImuPacket.fromBytes(data, config: imuConfig);
     if (packet == null) {
       _invalidImuPacketCount++;
       _lastInvalidImuPacketLength = data.length;
@@ -449,4 +672,16 @@ class DeviceController extends ChangeNotifier {
     disconnect();
     super.dispose();
   }
+}
+
+class _ImuRangeAutoTestStep {
+  final String title;
+  final String filenameLabel;
+  final ImuSensorConfig config;
+
+  const _ImuRangeAutoTestStep({
+    required this.title,
+    required this.filenameLabel,
+    required this.config,
+  });
 }

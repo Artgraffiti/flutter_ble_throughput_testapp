@@ -7,11 +7,13 @@ import '../models/imu_csv_format.dart';
 class CsvRecordingPanel extends StatelessWidget {
   final CsvManager csvManager;
   final VoidCallback onFormatChanged;
+  final bool controlsEnabled;
 
   const CsvRecordingPanel({
     super.key,
     required this.csvManager,
     required this.onFormatChanged,
+    this.controlsEnabled = true,
   });
 
   @override
@@ -41,7 +43,9 @@ class CsvRecordingPanel extends StatelessWidget {
                   ? "Выбрать папку для сохранения"
                   : ".../${csvManager.saveDirectory!.split('/').last}",
             ),
-            onPressed: () => csvManager.pickSaveDirectory(),
+            onPressed: controlsEnabled
+                ? () => csvManager.pickSaveDirectory()
+                : null,
           ),
           const SizedBox(height: 12),
 
@@ -55,7 +59,7 @@ class CsvRecordingPanel extends StatelessWidget {
                 builder: (context, isRecording, child) {
                   return DropdownButton<ImuCsvFormat>(
                     value: csvManager.selectedCsvFormat,
-                    onChanged: isRecording
+                    onChanged: isRecording || !controlsEnabled
                         ? null
                         : (v) {
                             if (v != null) {
@@ -99,7 +103,8 @@ class CsvRecordingPanel extends StatelessWidget {
                       label: Text(
                         isRecording ? "Остановить запись" : "Начать запись",
                       ),
-                      onPressed: csvManager.saveDirectory == null
+                      onPressed:
+                          csvManager.saveDirectory == null || !controlsEnabled
                           ? null
                           : () => csvManager.toggleCsvRecording(),
                     ),

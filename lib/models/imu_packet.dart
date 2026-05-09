@@ -1,6 +1,8 @@
 import 'dart:typed_data';
 import 'dart:math';
 
+import 'imu_sensor_config.dart';
+
 class DpImuData {
   final List<int> rawAcc;
   final List<int> rawGyro;
@@ -40,28 +42,47 @@ class DpImuPacket {
   final int timestamp;
   final int snapshotIndex;
   final List<DpImuData> imu;
+  final ImuSensorConfig config;
 
-  // Коэффициенты пересчета сырых данных IMU-сенсора
-  // Акселерометр: +-8g -> 0.244 mg/LSB
-  static const double _accelSensitivity = 0.244 / 1000.0; // g/LSB
   static const double _gravity = 9.80665; // м/с^2
-
-  // Гироскоп: +-4000 dps -> 140 mdps/LSB
-  static const double _gyroSensitivity = 140.0 / 1000.0; // dps/LSB
+  static const Map<int, double> _accelSensitivityByRangeG = {
+    4: 0.122 / 1000.0,
+    8: 0.244 / 1000.0,
+    16: 0.488 / 1000.0,
+    32: 0.976 / 1000.0,
+  };
+  static const Map<int, double> _gyroSensitivityByRangeDps = {
+    125: 4.375 / 1000.0,
+    250: 8.75 / 1000.0,
+    500: 17.5 / 1000.0,
+    1000: 35.0 / 1000.0,
+    2000: 70.0 / 1000.0,
+    4000: 140.0 / 1000.0,
+  };
 
   DpImuPacket({
     required this.timestamp,
     required this.snapshotIndex,
     required this.imu,
+    this.config = ImuSensorConfig.defaults,
   });
 
-  static DpImuPacket? fromBytes(List<int> bytes) {
+  static DpImuPacket? fromBytes(
+    List<int> bytes, {
+    ImuSensorConfig config = ImuSensorConfig.defaults,
+  }) {
     if (bytes.length < minPacketSize) return null;
 
     final bytesView = bytes is Uint8List ? bytes : Uint8List.fromList(bytes);
     final byteData = ByteData.sublistView(bytesView);
 
     final timestamp = byteData.getUint64(0, Endian.little);
+    final accelSensitivity =
+        _accelSensitivityByRangeG[config.accelRangeG] ??
+        _accelSensitivityByRangeG[ImuSensorConfig.defaults.accelRangeG]!;
+    final gyroSensitivity =
+        _gyroSensitivityByRangeDps[config.gyroRangeDps] ??
+        _gyroSensitivityByRangeDps[ImuSensorConfig.defaults.gyroRangeDps]!;
     int offset = timestampSize;
     final imuList = <DpImuData>[];
 
@@ -80,11 +101,11 @@ class DpImuPacket {
       ];
       offset += 6;
 
-      List<double> accG = rawAcc.map((val) => val * _accelSensitivity).toList();
+      List<double> accG = rawAcc.map((val) => val * accelSensitivity).toList();
       List<double> accMs2 = accG.map((val) => val * _gravity).toList();
 
       List<double> gyroDps = rawGyro
-          .map((val) => val * _gyroSensitivity)
+          .map((val) => val * gyroSensitivity)
           .toList();
       List<double> gyroRads = gyroDps.map((val) => val * (pi / 180.0)).toList();
 
@@ -100,6 +121,11 @@ class DpImuPacket {
       );
     }
 
-    return DpImuPacket(timestamp: timestamp, snapshotIndex: 0, imu: imuList);
+    return DpImuPacket(
+      timestamp: timestamp,
+      snapshotIndex: 0,
+      imu: imuList,
+      config: config,
+    );
   }
 }

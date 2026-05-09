@@ -210,9 +210,10 @@ class _DeviceScreenState extends State<DeviceScreen>
         ValueListenableBuilder<bool>(
           valueListenable: _controller.isTestingNotifier,
           builder: (context, isTesting, child) {
+            final busy = isTesting || _controller.isAutoTesting;
             return ToggleButtons(
               isSelected: [_isWriteMode, !_isWriteMode],
-              onPressed: isTesting
+              onPressed: busy
                   ? null
                   : (index) {
                       setState(() {
@@ -249,7 +250,11 @@ class _DeviceScreenState extends State<DeviceScreen>
                     ),
                   )
                   .toList(),
-              onChanged: (v) => setState(() => _selectedUnit = v!),
+              onChanged:
+                  _controller.isAutoTesting ||
+                      _controller.isTestingNotifier.value
+                  ? null
+                  : (v) => setState(() => _selectedUnit = v!),
             ),
           ],
         ),
@@ -257,6 +262,7 @@ class _DeviceScreenState extends State<DeviceScreen>
         ValueListenableBuilder<bool>(
           valueListenable: _controller.isTestingNotifier,
           builder: (context, isTesting, child) {
+            final busy = isTesting || _controller.isAutoTesting;
             return Wrap(
               alignment: WrapAlignment.center,
               crossAxisAlignment: WrapCrossAlignment.center,
@@ -284,7 +290,7 @@ class _DeviceScreenState extends State<DeviceScreen>
                         DropdownMenuItem(value: 200, child: Text("200 мс")),
                         DropdownMenuItem(value: 500, child: Text("500 мс")),
                       ],
-                      onChanged: isTesting
+                      onChanged: busy
                           ? null
                           : (v) => setState(() => _updateIntervalMs = v!),
                     ),
@@ -310,7 +316,7 @@ class _DeviceScreenState extends State<DeviceScreen>
                         DropdownMenuItem(value: 30, child: Text("30 мин")),
                         DropdownMenuItem(value: 60, child: Text("60 мин")),
                       ],
-                      onChanged: isTesting
+                      onChanged: busy
                           ? null
                           : (v) => setState(
                               () => _selectedTestDurationMinutes = v,
@@ -348,6 +354,14 @@ class _DeviceScreenState extends State<DeviceScreen>
           CsvRecordingPanel(
             csvManager: _controller.csvManager,
             onFormatChanged: () => setState(() {}),
+            controlsEnabled: !_controller.isAutoTesting,
+          ),
+          const SizedBox(height: 20),
+          ImuRangeAutoTestPanel(
+            controller: _controller,
+            unit: _selectedUnit,
+            intervalMs: _updateIntervalMs,
+            duration: _selectedTestDuration,
           ),
         ],
       );

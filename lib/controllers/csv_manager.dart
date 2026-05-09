@@ -6,11 +6,13 @@ import 'package:flutter/foundation.dart';
 
 import '../models/imu_packet.dart';
 import '../models/imu_csv_format.dart';
+import '../models/imu_sensor_config.dart';
 
 class CsvManager {
   static const int _flushPacketThreshold = 64;
 
   final ValueNotifier<String> logNotifier;
+  final ImuSensorConfig Function()? imuConfigProvider;
 
   String? saveDirectory;
   ImuCsvFormat selectedCsvFormat = ImuCsvFormat.converted;
@@ -22,7 +24,7 @@ class CsvManager {
   int _recordedLinesCount = 0;
   final StringBuffer _pendingCsvRows = StringBuffer();
 
-  CsvManager(this.logNotifier);
+  CsvManager(this.logNotifier, {this.imuConfigProvider});
 
   bool get isRecording => isRecordingCsvNotifier.value;
 
@@ -45,10 +47,13 @@ class CsvManager {
     }
   }
 
-  Future<void> startCsvRecording() async {
+  Future<bool> startCsvRecording({
+    ImuSensorConfig? config,
+    String? label,
+  }) async {
     if (saveDirectory == null) {
       logNotifier.value = "Ошибка: Не выбрана папка для сохранения.";
-      return;
+      return false;
     }
 
     try {
@@ -57,7 +62,14 @@ class CsvManager {
           .replaceAll(':', '-')
           .split('.')
           .first;
-      String filename = 'telemetry_$timestamp.csv';
+      final activeConfig = config ?? imuConfigProvider?.call();
+      final filenameParts = [
+        'telemetry',
+        timestamp,
+        if (activeConfig != null) _formatImuConfigForFilename(activeConfig),
+        if (label != null && label.isNotEmpty) _sanitizeFilenamePart(label),
+      ];
+      String filename = '${filenameParts.join('_')}.csv';
       File file = File('$saveDirectory/$filename');
 
       _csvSink = file.openWrite();
@@ -76,8 +88,10 @@ class CsvManager {
       recordedLinesNotifier.value = 0;
       isRecordingCsvNotifier.value = true;
       logNotifier.value = "Начата запись в файл: $filename";
+      return true;
     } catch (e) {
       logNotifier.value = "Ошибка создания файла: $e";
+      return false;
     }
   }
 
@@ -135,6 +149,23 @@ class CsvManager {
 
     _csvSink?.write(_pendingCsvRows.toString());
     _pendingCsvRows.clear();
+  }
+
+  static String _formatImuConfigForFilename(ImuSensorConfig config) {
+    return [
+      'acc${config.accelOdrHz}hz',
+      '${config.accelRangeG}g',
+      'gyro${config.gyroOdrHz}hz',
+      '${config.gyroRangeDps}dps',
+    ].join('_');
+  }
+
+  static String _sanitizeFilenamePart(String value) {
+    return value
+        .toLowerCase()
+        .replaceAll(RegExp(r'[^a-z0-9а-яё]+'), '_')
+        .replaceAll(RegExp(r'_+'), '_')
+        .replaceAll(RegExp(r'^_|_$'), '');
   }
 
   void dispose() {

@@ -51,8 +51,9 @@ class WriteTestPanel extends StatelessWidget {
         ValueListenableBuilder<bool>(
           valueListenable: controller.isTestingNotifier,
           builder: (context, isTesting, child) {
+            final busy = isTesting || controller.isAutoTesting;
             return ElevatedButton(
-              onPressed: isTesting
+              onPressed: busy
                   ? null
                   : () => controller.runWriteTest(
                       unit,
@@ -107,7 +108,9 @@ class _ImuConfigPanelState extends State<ImuConfigPanel> {
   Widget build(BuildContext context) {
     final characteristicFound =
         widget.controller.imuConfigCharacteristic != null;
-    final applying = widget.controller.isApplyingImuConfig;
+    final applying =
+        widget.controller.isApplyingImuConfig ||
+        widget.controller.isAutoTesting;
 
     return Card(
       child: Padding(
@@ -115,9 +118,21 @@ class _ImuConfigPanelState extends State<ImuConfigPanel> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            const Text(
-              "IMU config",
-              style: TextStyle(fontWeight: FontWeight.bold),
+            Row(
+              children: [
+                const Expanded(
+                  child: Text(
+                    "IMU config",
+                    style: TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                ),
+                if (applying)
+                  const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+              ],
             ),
             const SizedBox(height: 12),
             if (!characteristicFound)
@@ -133,12 +148,9 @@ class _ImuConfigPanelState extends State<ImuConfigPanel> {
                       options: ImuSensorConfig.odrOptions,
                       onChanged: applying
                           ? null
-                          : (value) {
-                              setState(
-                                () =>
-                                    _draft = _draft.copyWith(accelOdrHz: value),
-                              );
-                            },
+                          : (value) => _applyConfigChange(
+                              _draft.copyWith(accelOdrHz: value),
+                            ),
                     ),
                   ),
                   const SizedBox(width: 12),
@@ -150,13 +162,9 @@ class _ImuConfigPanelState extends State<ImuConfigPanel> {
                       options: ImuSensorConfig.accelRangeOptions,
                       onChanged: applying
                           ? null
-                          : (value) {
-                              setState(
-                                () => _draft = _draft.copyWith(
-                                  accelRangeG: value,
-                                ),
-                              );
-                            },
+                          : (value) => _applyConfigChange(
+                              _draft.copyWith(accelRangeG: value),
+                            ),
                     ),
                   ),
                 ],
@@ -172,12 +180,9 @@ class _ImuConfigPanelState extends State<ImuConfigPanel> {
                       options: ImuSensorConfig.odrOptions,
                       onChanged: applying
                           ? null
-                          : (value) {
-                              setState(
-                                () =>
-                                    _draft = _draft.copyWith(gyroOdrHz: value),
-                              );
-                            },
+                          : (value) => _applyConfigChange(
+                              _draft.copyWith(gyroOdrHz: value),
+                            ),
                     ),
                   ),
                   const SizedBox(width: 12),
@@ -189,39 +194,10 @@ class _ImuConfigPanelState extends State<ImuConfigPanel> {
                       options: ImuSensorConfig.gyroRangeOptions,
                       onChanged: applying
                           ? null
-                          : (value) {
-                              setState(
-                                () => _draft = _draft.copyWith(
-                                  gyroRangeDps: value,
-                                ),
-                              );
-                            },
+                          : (value) => _applyConfigChange(
+                              _draft.copyWith(gyroRangeDps: value),
+                            ),
                     ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 12),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.end,
-                children: [
-                  TextButton(
-                    onPressed: applying
-                        ? null
-                        : () => widget.controller.readImuConfig(),
-                    child: const Text("Прочитать"),
-                  ),
-                  const SizedBox(width: 8),
-                  ElevatedButton(
-                    onPressed: applying
-                        ? null
-                        : () => widget.controller.applyImuConfig(_draft),
-                    child: applying
-                        ? const SizedBox(
-                            width: 18,
-                            height: 18,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : const Text("Применить"),
                   ),
                 ],
               ),
@@ -232,6 +208,21 @@ class _ImuConfigPanelState extends State<ImuConfigPanel> {
     );
   }
 
+  Future<void> _applyConfigChange(ImuSensorConfig config) async {
+    if (config == _draft || widget.controller.isApplyingImuConfig) {
+      return;
+    }
+
+    setState(() => _draft = config);
+
+    final applied = await widget.controller.applyImuConfig(config);
+    if (!mounted || applied) {
+      return;
+    }
+
+    setState(() => _draft = widget.controller.imuConfig);
+  }
+
   Widget _buildDropdown({
     required String label,
     required int value,
@@ -240,6 +231,7 @@ class _ImuConfigPanelState extends State<ImuConfigPanel> {
     required ValueChanged<int>? onChanged,
   }) {
     return DropdownButtonFormField<int>(
+      key: ValueKey('$label-$value'),
       initialValue: value,
       decoration: InputDecoration(
         labelText: label,
@@ -285,6 +277,7 @@ class NotifyTestPanel extends StatelessWidget {
           ValueListenableBuilder<bool>(
             valueListenable: controller.isTestingNotifier,
             builder: (context, isTesting, child) {
+              final busy = isTesting || controller.isAutoTesting;
               return DropdownButton<BluetoothCharacteristic>(
                 isExpanded: true,
                 value: controller.selectedNotifyCharacteristic,
@@ -303,7 +296,7 @@ class NotifyTestPanel extends StatelessWidget {
                     ),
                   );
                 }).toList(),
-                onChanged: isTesting
+                onChanged: busy
                     ? null
                     : (v) {
                         controller.selectNotifyCharacteristic(v);
@@ -315,14 +308,17 @@ class NotifyTestPanel extends StatelessWidget {
         ValueListenableBuilder<bool>(
           valueListenable: controller.isTestingNotifier,
           builder: (context, isTesting, child) {
+            final busy = isTesting || controller.isAutoTesting;
             return ElevatedButton(
-              onPressed: () => controller.toggleNotificationTest(
-                unit,
-                intervalMs,
-                duration: duration,
-              ),
+              onPressed: controller.isAutoTesting
+                  ? null
+                  : () => controller.toggleNotificationTest(
+                      unit,
+                      intervalMs,
+                      duration: duration,
+                    ),
               style: ElevatedButton.styleFrom(
-                backgroundColor: isTesting
+                backgroundColor: busy
                     ? Colors.red
                     : Theme.of(context).primaryColor,
                 foregroundColor: Colors.white,
@@ -332,6 +328,100 @@ class NotifyTestPanel extends StatelessWidget {
           },
         ),
       ],
+    );
+  }
+}
+
+class ImuRangeAutoTestPanel extends StatelessWidget {
+  final DeviceController controller;
+  final ThroughputUnit unit;
+  final int intervalMs;
+  final Duration? duration;
+
+  const ImuRangeAutoTestPanel({
+    super.key,
+    required this.controller,
+    required this.unit,
+    required this.intervalMs,
+    required this.duration,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    final durationSelected = duration != null;
+    final hasSaveDirectory = controller.csvManager.saveDirectory != null;
+    final hasImuConfig = controller.imuConfigCharacteristic != null;
+    final hasNotify = controller.selectedNotifyCharacteristic != null;
+    final canStart =
+        durationSelected &&
+        hasSaveDirectory &&
+        hasImuConfig &&
+        hasNotify &&
+        !controller.isApplyingImuConfig &&
+        !controller.isTestingNotifier.value;
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.playlist_play_outlined, color: colors.primary),
+                const SizedBox(width: 8),
+                const Expanded(
+                  child: Text(
+                    "Автотест range IMU",
+                    style: TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                ),
+                if (controller.isAutoTesting)
+                  const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            Text(
+              durationSelected
+                  ? "ACC range: ${ImuSensorConfig.accelRangeOptions.length} шагов, GYRO range: ${ImuSensorConfig.gyroRangeOptions.length} шагов"
+                  : "Выберите фиксированную длительность теста",
+              style: TextStyle(color: colors.onSurfaceVariant),
+            ),
+            const SizedBox(height: 12),
+            ElevatedButton.icon(
+              onPressed: controller.isAutoTesting
+                  ? controller.stopImuRangeAutoTest
+                  : canStart
+                  ? () => controller.runImuRangeAutoTest(
+                      unit,
+                      intervalMs,
+                      duration: duration,
+                    )
+                  : null,
+              icon: Icon(
+                controller.isAutoTesting ? Icons.stop : Icons.play_arrow,
+              ),
+              label: Text(
+                controller.isAutoTesting
+                    ? "Остановить автотест"
+                    : "Запустить автотест",
+              ),
+            ),
+            if (!hasSaveDirectory) ...[
+              const SizedBox(height: 8),
+              Text(
+                "Папка CSV не выбрана",
+                style: TextStyle(color: colors.error),
+              ),
+            ],
+          ],
+        ),
+      ),
     );
   }
 }

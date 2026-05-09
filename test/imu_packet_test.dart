@@ -1,6 +1,7 @@
 import 'dart:typed_data';
 
 import 'package:ble_throughput/models/imu_packet.dart';
+import 'package:ble_throughput/models/imu_sensor_config.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
@@ -31,6 +32,42 @@ void main() {
     expect(packet.snapshotIndex, 0);
     expect(packet.imu[0].rawAcc, [1000, 1000, 1000]);
     expect(packet.imu[0].rawGyro, [2000, 2000, 2000]);
+  });
+
+  test('uses active imu ranges for SI conversion', () {
+    final payload = ByteData(DpImuPacket.minPacketSize);
+    payload.setUint64(0, 123456, Endian.little);
+
+    var offset = DpImuPacket.timestampSize;
+    for (var imu = 0; imu < DpImuPacket.sensorCount; imu++) {
+      for (var axis = 0; axis < DpImuPacket.axesPerVector; axis++) {
+        payload.setInt16(offset, 1000, Endian.little);
+        offset += DpImuPacket.bytesPerInt16;
+      }
+      for (var axis = 0; axis < DpImuPacket.axesPerVector; axis++) {
+        payload.setInt16(offset, 1000, Endian.little);
+        offset += DpImuPacket.bytesPerInt16;
+      }
+    }
+
+    final packet = DpImuPacket.fromBytes(
+      payload.buffer.asUint8List(),
+      config: const ImuSensorConfig(
+        accelOdrHz: 120,
+        accelRangeG: 16,
+        gyroOdrHz: 120,
+        gyroRangeDps: 2000,
+      ),
+    );
+
+    expect(packet, isNotNull);
+    expect(packet!.imu[0].accG[0], closeTo(0.488, 1e-9));
+    expect(packet.imu[0].accMs2[0], closeTo(0.488 * 9.80665, 1e-9));
+    expect(packet.imu[0].gyroDps[0], closeTo(70.0, 1e-9));
+    expect(
+      packet.imu[0].gyroRads[0],
+      closeTo(70.0 * 3.141592653589793 / 180.0, 1e-9),
+    );
   });
 
   test('rejects payloads shorter than one snapshot', () {
