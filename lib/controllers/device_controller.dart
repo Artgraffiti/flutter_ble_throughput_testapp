@@ -34,6 +34,7 @@ class DeviceController extends ChangeNotifier {
 
   final ValueNotifier<String> logTextNotifier = ValueNotifier<String>("");
   final ValueNotifier<bool> isTestingNotifier = ValueNotifier<bool>(false);
+  final ValueNotifier<int> telemetryNotifier = ValueNotifier<int>(0);
 
   StreamSubscription<BluetoothConnectionState>? _connectionSub;
   StreamSubscription? _notifySub;
@@ -42,8 +43,14 @@ class DeviceController extends ChangeNotifier {
 
   int _notifyBytesReceived = 0;
   int _notifyPacketCount = 0;
+  int _decodedImuPacketCount = 0;
+  int _invalidImuPacketCount = 0;
+  int _lastInvalidImuPacketLength = 0;
   List<int> _lastPacketData = [];
+  List<int>? _latestNotifyData;
   DpImuPacket? _lastImuPacket;
+
+  DpImuPacket? get lastImuPacket => _lastImuPacket;
 
   double _instantSpeed = 0;
   double _maxSpeed = 0;
@@ -290,10 +297,11 @@ class DeviceController extends ChangeNotifier {
           _notifyPacketCount++;
           _lastPacketData = data;
 
-          if (selectedNotifyCharacteristic!.uuid.toString() == _dpImuUuid) {
-            _lastImuPacket = DpImuPacket.fromBytes(data);
-            if (_lastImuPacket != null) {
-              csvManager.writeImuToCsv(_lastImuPacket!);
+          if (selectedNotifyCharacteristic?.uuid.toString() == _dpImuUuid) {
+            if (csvManager.isRecording) {
+              _decodeImuPacket(data, writeCsv: true);
+            } else {
+              _latestNotifyData = data;
             }
           }
         });
@@ -314,11 +322,15 @@ class DeviceController extends ChangeNotifier {
   void _resetMetrics() {
     _notifyBytesReceived = 0;
     _notifyPacketCount = 0;
+    _decodedImuPacketCount = 0;
+    _invalidImuPacketCount = 0;
+    _lastInvalidImuPacketLength = 0;
     _instantSpeed = 0;
     _maxSpeed = 0;
     _lastBytes = 0;
     _lastTime = 0;
     _lastPacketData = [];
+    _latestNotifyData = null;
     _lastImuPacket = null;
   }
 
@@ -334,6 +346,15 @@ class DeviceController extends ChangeNotifier {
   void _updateNotifyStats(ThroughputUnit unit, {bool finalUpdate = false}) {
     double now = _notifyStopwatch.elapsedMilliseconds / 1000.0;
     if (now == 0) return;
+
+    final latestData = _latestNotifyData;
+    if (latestData != null) {
+      _decodeImuPacket(latestData, writeCsv: false);
+      _latestNotifyData = null;
+    }
+    if (_lastImuPacket != null) {
+      telemetryNotifier.value++;
+    }
 
     if (now - _lastTime >= _speedCalcInterval || finalUpdate) {
       _calculateSpeed(now, _notifyBytesReceived.toDouble());
@@ -351,6 +372,9 @@ class DeviceController extends ChangeNotifier {
       var imu = _lastImuPacket!.imu[0];
       decodedImuText =
           "\n\n[Декодированный IMU]\nTimestamp: ${_lastImuPacket!.timestamp} мкс\n"
+          "Декодировано IMU-пакетов: $_decodedImuPacketCount\n"
+          "Некорректных notify: $_invalidImuPacketCount"
+          "${_lastInvalidImuPacketLength > 0 ? ' (последняя длина $_lastInvalidImuPacketLength байт)' : ''}\n"
           "Снапшот 0 (СИ):\n"
           "ACC: x=${imu.accMs2[0].toStringAsFixed(2)}, y=${imu.accMs2[1].toStringAsFixed(2)}, z=${imu.accMs2[2].toStringAsFixed(2)} [m/s^2]\n"
           "GYR: x=${imu.gyroRads[0].toStringAsFixed(2)}, y=${imu.gyroRads[1].toStringAsFixed(2)}, z=${imu.gyroRads[2].toStringAsFixed(2)} [rad/s]\n";
@@ -358,6 +382,21 @@ class DeviceController extends ChangeNotifier {
 
     logTextNotifier.value =
         "Получено: $_notifyBytesReceived байт\nВремя: ${now.toStringAsFixed(2)} сек\nМгновенная: ${unit.formatSpeed(_instantSpeed)}\nСредняя: ${unit.formatSpeed(avgSpeed)}\nМаксимальная: ${unit.formatSpeed(_maxSpeed)}\n\nПоследний пакет (№$_notifyPacketCount, ${_lastPacketData.length} байт):\n$hexData$decodedImuText";
+  }
+
+  void _decodeImuPacket(List<int> data, {required bool writeCsv}) {
+    final packet = DpImuPacket.fromBytes(data);
+    if (packet == null) {
+      _invalidImuPacketCount++;
+      _lastInvalidImuPacketLength = data.length;
+      return;
+    }
+
+    _lastImuPacket = packet;
+    _decodedImuPacketCount++;
+    if (writeCsv) {
+      csvManager.writeImuToCsv(packet);
+    }
   }
 
   @override
@@ -368,6 +407,7 @@ class DeviceController extends ChangeNotifier {
     _notifyUpdateTimer?.cancel();
     logTextNotifier.dispose();
     isTestingNotifier.dispose();
+    telemetryNotifier.dispose();
     disconnect();
     super.dispose();
   }

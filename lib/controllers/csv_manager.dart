@@ -8,18 +8,23 @@ import '../models/imu_packet.dart';
 import '../models/imu_csv_format.dart';
 
 class CsvManager {
-  final ValueNotifier<String> logNotifier; 
+  static const int _flushPacketThreshold = 64;
+
+  final ValueNotifier<String> logNotifier;
 
   String? saveDirectory;
   ImuCsvFormat selectedCsvFormat = ImuCsvFormat.converted;
-  
+
   final ValueNotifier<bool> isRecordingCsvNotifier = ValueNotifier<bool>(false);
   final ValueNotifier<int> recordedLinesNotifier = ValueNotifier<int>(0);
-  
+
   IOSink? _csvSink;
   int _recordedLinesCount = 0;
+  final StringBuffer _pendingCsvRows = StringBuffer();
 
   CsvManager(this.logNotifier);
+
+  bool get isRecording => isRecordingCsvNotifier.value;
 
   Future<void> pickSaveDirectory() async {
     String? selectedDirectory = await FilePicker.platform.getDirectoryPath(
@@ -28,7 +33,7 @@ class CsvManager {
     if (selectedDirectory != null) {
       saveDirectory = selectedDirectory;
       // Принудительное обновление UI
-      isRecordingCsvNotifier.value = isRecordingCsvNotifier.value; 
+      isRecordingCsvNotifier.value = isRecordingCsvNotifier.value;
     }
   }
 
@@ -47,16 +52,24 @@ class CsvManager {
     }
 
     try {
-      String timestamp = DateTime.now().toIso8601String().replaceAll(':', '-').split('.').first;
+      String timestamp = DateTime.now()
+          .toIso8601String()
+          .replaceAll(':', '-')
+          .split('.')
+          .first;
       String filename = 'telemetry_$timestamp.csv';
       File file = File('$saveDirectory/$filename');
-      
+
       _csvSink = file.openWrite();
-      
+
       if (selectedCsvFormat == ImuCsvFormat.raw) {
-        _csvSink?.writeln("timestamp_us,acc_x_raw,acc_y_raw,acc_z_raw,gyro_x_raw,gyro_y_raw,gyro_z_raw");
+        _csvSink?.writeln(
+          "timestamp_us,acc_x_raw,acc_y_raw,acc_z_raw,gyro_x_raw,gyro_y_raw,gyro_z_raw",
+        );
       } else {
-        _csvSink?.writeln("timestamp_us,acc_x_ms2,acc_y_ms2,acc_z_ms2,gyro_x_rads,gyro_y_rads,gyro_z_rads");
+        _csvSink?.writeln(
+          "timestamp_us,acc_x_ms2,acc_y_ms2,acc_z_ms2,gyro_x_rads,gyro_y_rads,gyro_z_rads",
+        );
       }
 
       _recordedLinesCount = 0;
@@ -72,32 +85,55 @@ class CsvManager {
     if (!isRecordingCsvNotifier.value) return;
 
     try {
+      _flushPendingRows();
       await _csvSink?.flush();
       await _csvSink?.close();
       _csvSink = null;
       isRecordingCsvNotifier.value = false;
-      logNotifier.value = "Запись остановлена. Сохранено строк: $_recordedLinesCount";
+      logNotifier.value =
+          "Запись остановлена. Сохранено строк: $_recordedLinesCount";
     } catch (e) {
       logNotifier.value = "Ошибка при закрытии файла: $e";
     }
   }
 
   void writeImuToCsv(DpImuPacket packet) {
-    if (_csvSink == null || !isRecordingCsvNotifier.value) return;
+    writeImuPacketsToCsv([packet]);
+  }
 
-    for (var imu in packet.imu) {
-      if (selectedCsvFormat == ImuCsvFormat.raw) {
-        _csvSink?.writeln("${packet.timestamp},${imu.rawAcc[0]},${imu.rawAcc[1]},${imu.rawAcc[2]},${imu.rawGyro[0]},${imu.rawGyro[1]},${imu.rawGyro[2]}");
-      } else {
-        _csvSink?.writeln("${packet.timestamp},${imu.accMs2[0]},${imu.accMs2[1]},${imu.accMs2[2]},${imu.gyroRads[0]},${imu.gyroRads[1]},${imu.gyroRads[2]}");
+  void writeImuPacketsToCsv(List<DpImuPacket> packets) {
+    if (_csvSink == null || !isRecording) return;
+
+    for (final packet in packets) {
+      for (var imu in packet.imu) {
+        if (selectedCsvFormat == ImuCsvFormat.raw) {
+          _pendingCsvRows.writeln(
+            "${packet.timestamp},${imu.rawAcc[0]},${imu.rawAcc[1]},${imu.rawAcc[2]},${imu.rawGyro[0]},${imu.rawGyro[1]},${imu.rawGyro[2]}",
+          );
+        } else {
+          _pendingCsvRows.writeln(
+            "${packet.timestamp},${imu.accMs2[0]},${imu.accMs2[1]},${imu.accMs2[2]},${imu.gyroRads[0]},${imu.gyroRads[1]},${imu.gyroRads[2]}",
+          );
+        }
+        _recordedLinesCount++;
       }
-      _recordedLinesCount++;
+    }
+
+    if (_recordedLinesCount % _flushPacketThreshold == 0) {
+      _flushPendingRows();
     }
 
     // Обновляем UI счетчика раз в 50 строк, чтобы не просаживать FPS
     if (_recordedLinesCount % 50 == 0) {
       recordedLinesNotifier.value = _recordedLinesCount;
     }
+  }
+
+  void _flushPendingRows() {
+    if (_pendingCsvRows.isEmpty) return;
+
+    _csvSink?.write(_pendingCsvRows.toString());
+    _pendingCsvRows.clear();
   }
 
   void dispose() {
