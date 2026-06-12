@@ -71,8 +71,26 @@ class DpImuPacket {
     List<int> bytes, {
     ImuSensorConfig config = ImuSensorConfig.defaults,
   }) {
-    if (bytes.length < minPacketSize) return null;
+    final packets = packetsFromBytes(bytes, config: config);
+    if (packets.isEmpty) return null;
+    return packets.first;
+  }
 
+  static int snapshotCountFromBytes(List<int> bytes) {
+    if (bytes.length < minPacketSize) return 0;
+
+    final payloadSize = bytes.length - timestampSize;
+    if (payloadSize % snapshotSize != 0) return 0;
+
+    return payloadSize ~/ snapshotSize;
+  }
+
+  static List<DpImuPacket> packetsFromBytes(
+    List<int> bytes, {
+    ImuSensorConfig config = ImuSensorConfig.defaults,
+  }) {
+    final snapshotCount = snapshotCountFromBytes(bytes);
+    if (snapshotCount == 0) return const [];
     final bytesView = bytes is Uint8List ? bytes : Uint8List.fromList(bytes);
     final byteData = ByteData.sublistView(bytesView);
 
@@ -84,49 +102,58 @@ class DpImuPacket {
         _gyroSensitivityByRangeDps[config.gyroRangeDps] ??
         _gyroSensitivityByRangeDps[ImuSensorConfig.defaults.gyroRangeDps]!;
     int offset = timestampSize;
-    final imuList = <DpImuData>[];
+    final packets = <DpImuPacket>[];
 
-    for (int i = 0; i < sensorCount; i++) {
-      List<int> rawAcc = [
-        byteData.getInt16(offset, Endian.little),
-        byteData.getInt16(offset + 2, Endian.little),
-        byteData.getInt16(offset + 4, Endian.little),
-      ];
-      offset += 6;
+    for (
+      int snapshotIndex = 0;
+      snapshotIndex < snapshotCount;
+      snapshotIndex++
+    ) {
+      final imuList = <DpImuData>[];
 
-      List<int> rawGyro = [
-        byteData.getInt16(offset, Endian.little),
-        byteData.getInt16(offset + 2, Endian.little),
-        byteData.getInt16(offset + 4, Endian.little),
-      ];
-      offset += 6;
+      for (int i = 0; i < sensorCount; i++) {
+        final rawAcc = [
+          byteData.getInt16(offset, Endian.little),
+          byteData.getInt16(offset + 2, Endian.little),
+          byteData.getInt16(offset + 4, Endian.little),
+        ];
+        offset += 6;
 
-      List<double> accG = rawAcc.map((val) => val * accelSensitivity).toList();
-      List<double> accMs2 = accG.map((val) => val * _gravity).toList();
+        final rawGyro = [
+          byteData.getInt16(offset, Endian.little),
+          byteData.getInt16(offset + 2, Endian.little),
+          byteData.getInt16(offset + 4, Endian.little),
+        ];
+        offset += 6;
 
-      List<double> gyroDps = rawGyro
-          .map((val) => val * gyroSensitivity)
-          .toList();
-      List<double> gyroRads = gyroDps.map((val) => val * (pi / 180.0)).toList();
+        final accG = rawAcc.map((val) => val * accelSensitivity).toList();
+        final accMs2 = accG.map((val) => val * _gravity).toList();
 
-      imuList.add(
-        DpImuData(
-          rawAcc: rawAcc,
-          rawGyro: rawGyro,
-          accG: accG,
-          accMs2: accMs2,
-          gyroDps: gyroDps,
-          gyroRads: gyroRads,
+        final gyroDps = rawGyro.map((val) => val * gyroSensitivity).toList();
+        final gyroRads = gyroDps.map((val) => val * (pi / 180.0)).toList();
+
+        imuList.add(
+          DpImuData(
+            rawAcc: rawAcc,
+            rawGyro: rawGyro,
+            accG: accG,
+            accMs2: accMs2,
+            gyroDps: gyroDps,
+            gyroRads: gyroRads,
+          ),
+        );
+      }
+
+      packets.add(
+        DpImuPacket(
+          timestamp: timestamp,
+          snapshotIndex: snapshotIndex,
+          imu: imuList,
+          config: config,
         ),
       );
     }
 
-
-    return DpImuPacket(
-      timestamp: timestamp,
-      snapshotIndex: 0,
-      imu: imuList,
-      config: config,
-    );
+    return packets;
   }
 }

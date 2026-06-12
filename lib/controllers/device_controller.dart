@@ -59,9 +59,20 @@ class DeviceController extends ChangeNotifier {
 
   double _instantSpeed = 0;
   double _maxSpeed = 0;
+  double _instantSnapshotRate = 0;
+  double _maxSnapshotRate = 0;
   int _lastBytes = 0;
+  int _lastSnapshots = 0;
   double _lastTime = 0;
   final double _speedCalcInterval = 0.5;
+
+  double get instantSnapshotRate => _instantSnapshotRate;
+  double get maxSnapshotRate => _maxSnapshotRate;
+  double get averageSnapshotRate {
+    final seconds = _notifyStopwatch.elapsedMilliseconds / 1000.0;
+    if (seconds <= 0) return 0;
+    return _decodedImuPacketCount / seconds;
+  }
 
   DeviceController(this.device) {
     csvManager = CsvManager(
@@ -334,10 +345,17 @@ class DeviceController extends ChangeNotifier {
         _lastPacketData = data;
 
         if (selectedNotifyCharacteristic?.uuid.toString() == _dpImuUuid) {
+          final snapshotCount = DpImuPacket.snapshotCountFromBytes(data);
+          if (snapshotCount == 0) {
+            _invalidImuPacketCount++;
+            _lastInvalidImuPacketLength = data.length;
+            return;
+          }
+
+          _decodedImuPacketCount += snapshotCount;
+          _latestNotifyData = data;
           if (csvManager.isRecording) {
-            _decodeImuPacket(data, writeCsv: true);
-          } else {
-            _latestNotifyData = data;
+            csvManager.enqueueNotifyDataForCsv(data, imuConfig);
           }
         }
       });
@@ -581,7 +599,10 @@ class DeviceController extends ChangeNotifier {
     _lastInvalidImuPacketLength = 0;
     _instantSpeed = 0;
     _maxSpeed = 0;
+    _instantSnapshotRate = 0;
+    _maxSnapshotRate = 0;
     _lastBytes = 0;
+    _lastSnapshots = 0;
     _lastTime = 0;
     _lastPacketData = [];
     _latestNotifyData = null;
@@ -593,7 +614,15 @@ class DeviceController extends ChangeNotifier {
     double deltaBytes = currentBytes - _lastBytes;
     _instantSpeed = deltaBytes / deltaT;
     if (_instantSpeed > _maxSpeed) _maxSpeed = _instantSpeed;
+
+    final deltaSnapshots = _decodedImuPacketCount - _lastSnapshots;
+    _instantSnapshotRate = deltaSnapshots / deltaT;
+    if (_instantSnapshotRate > _maxSnapshotRate) {
+      _maxSnapshotRate = _instantSnapshotRate;
+    }
+
     _lastBytes = currentBytes.toInt();
+    _lastSnapshots = _decodedImuPacketCount;
     _lastTime = currentTime;
   }
 
@@ -615,6 +644,7 @@ class DeviceController extends ChangeNotifier {
     }
 
     double avgSpeed = _notifyBytesReceived / now;
+    final avgSnapshotRate = _decodedImuPacketCount / now;
     final durationText = _activeNotifyDuration == null
         ? ""
         : "\nДлительность теста: ${_activeNotifyDuration!.inMinutes} мин";
@@ -629,10 +659,13 @@ class DeviceController extends ChangeNotifier {
       var imu = _lastImuPacket!.imu[0];
       decodedImuText =
           "\n\n[Декодированный IMU]\nTimestamp: ${_lastImuPacket!.timestamp} мкс\n"
-          "Декодировано IMU-пакетов: $_decodedImuPacketCount\n"
+          "Получено IMU-снапшотов: $_decodedImuPacketCount\n"
+          "Скорость IMU: ${_instantSnapshotRate.toStringAsFixed(2)} snapshot/s мгн, "
+          "${avgSnapshotRate.toStringAsFixed(2)} snapshot/s ср, "
+          "${_maxSnapshotRate.toStringAsFixed(2)} snapshot/s макс\n"
           "Некорректных notify: $_invalidImuPacketCount"
           "${_lastInvalidImuPacketLength > 0 ? ' (последняя длина $_lastInvalidImuPacketLength байт)' : ''}\n"
-          "Снапшот 0 (СИ, ACC ±${_lastImuPacket!.config.accelRangeG}g, GYRO ±${_lastImuPacket!.config.gyroRangeDps}dps):\n"
+          "Снапшот ${_lastImuPacket!.snapshotIndex} (СИ, ACC ±${_lastImuPacket!.config.accelRangeG}g, GYRO ±${_lastImuPacket!.config.gyroRangeDps}dps):\n"
           "ACC: x=${imu.accMs2[0].toStringAsFixed(2)}, y=${imu.accMs2[1].toStringAsFixed(2)}, z=${imu.accMs2[2].toStringAsFixed(2)} [m/s^2]\n"
           "GYR: x=${imu.gyroRads[0].toStringAsFixed(2)}, y=${imu.gyroRads[1].toStringAsFixed(2)}, z=${imu.gyroRads[2].toStringAsFixed(2)} [rad/s]\n";
     }
@@ -645,17 +678,12 @@ class DeviceController extends ChangeNotifier {
   }
 
   void _decodeImuPacket(List<int> data, {required bool writeCsv}) {
-    final packet = DpImuPacket.fromBytes(data, config: imuConfig);
-    if (packet == null) {
-      _invalidImuPacketCount++;
-      _lastInvalidImuPacketLength = data.length;
-      return;
-    }
+    final packets = DpImuPacket.packetsFromBytes(data, config: imuConfig);
+    if (packets.isEmpty) return;
 
-    _lastImuPacket = packet;
-    _decodedImuPacketCount++;
+    _lastImuPacket = packets.last;
     if (writeCsv) {
-      csvManager.writeImuToCsv(packet);
+      csvManager.writeImuPacketsToCsv(packets);
     }
   }
 

@@ -66,6 +66,15 @@ class _ImuDataPanelState extends State<ImuDataPanel> {
             ),
           ],
         ),
+        _StatChip(
+          icon: Icons.multiline_chart,
+          label: 'Snapshot/s',
+          value:
+              '${widget.controller.instantSnapshotRate.toStringAsFixed(1)} / '
+              '${widget.controller.averageSnapshotRate.toStringAsFixed(1)} / '
+              '${widget.controller.maxSnapshotRate.toStringAsFixed(1)}',
+          tooltip: 'Мгновенная / средняя / максимальная скорость IMU snapshot',
+        ),
         SegmentedButton<ImuDisplayMode>(
           segments: const [
             ButtonSegment(
@@ -141,6 +150,48 @@ class _ImuDataPanelState extends State<ImuDataPanel> {
           },
         );
       },
+    );
+  }
+}
+
+class _StatChip extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final String value;
+  final String tooltip;
+
+  const _StatChip({
+    required this.icon,
+    required this.label,
+    required this.value,
+    required this.tooltip,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+
+    return Tooltip(
+      message: tooltip,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+        decoration: BoxDecoration(
+          color: colors.surfaceContainerHighest.withValues(alpha: 0.45),
+          borderRadius: BorderRadius.circular(999),
+          border: Border.all(color: colors.outlineVariant),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 16, color: colors.primary),
+            const SizedBox(width: 8),
+            Text(
+              '$label: $value',
+              style: const TextStyle(fontWeight: FontWeight.w700),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
