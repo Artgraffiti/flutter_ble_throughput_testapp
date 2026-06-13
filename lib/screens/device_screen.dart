@@ -21,6 +21,7 @@ class DeviceScreen extends StatefulWidget {
 class _DeviceScreenState extends State<DeviceScreen>
     with WidgetsBindingObserver, TickerProviderStateMixin {
   late DeviceController _controller;
+  final ScrollController _logScrollController = ScrollController();
 
   // Локальные состояния UI
   bool _isWriteMode = true;
@@ -71,6 +72,7 @@ class _DeviceScreenState extends State<DeviceScreen>
   @override
   void dispose() {
     _fpsTicker.dispose();
+    _logScrollController.dispose();
     WidgetsBinding.instance.removeObserver(this);
     _controller.dispose();
     super.dispose();
@@ -122,7 +124,8 @@ class _DeviceScreenState extends State<DeviceScreen>
             padding: const EdgeInsets.all(16.0),
             child: Center(
               child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                mainAxisAlignment: MainAxisAlignment.start,
                 children: [
                   Text('ID: ${widget.device.remoteId}'),
                   Text(
@@ -151,19 +154,29 @@ class _DeviceScreenState extends State<DeviceScreen>
                   ValueListenableBuilder<String>(
                     valueListenable: _controller.logTextNotifier,
                     builder: (context, logText, child) {
-                      return Container(
-                        width: double.infinity,
-                        padding: const EdgeInsets.all(12),
-                        decoration: BoxDecoration(
-                          color: colors.surfaceContainerHighest,
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: Text(
-                          logText,
-                          textAlign: TextAlign.center,
-                          style: const TextStyle(
-                            fontSize: 14,
-                            fontFamily: 'monospace',
+                      return SizedBox(
+                        height: 260,
+                        child: Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: colors.surfaceContainerHighest,
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Scrollbar(
+                            controller: _logScrollController,
+                            thumbVisibility: true,
+                            child: SingleChildScrollView(
+                              controller: _logScrollController,
+                              child: SelectableText(
+                                logText,
+                                textAlign: TextAlign.left,
+                                style: const TextStyle(
+                                  fontSize: 14,
+                                  fontFamily: 'monospace',
+                                ),
+                              ),
+                            ),
                           ),
                         ),
                       );

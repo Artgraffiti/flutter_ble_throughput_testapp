@@ -139,7 +139,7 @@ class _ImuDataPanelState extends State<ImuDataPanel> {
             crossAxisCount: columns,
             crossAxisSpacing: 10,
             mainAxisSpacing: 10,
-            mainAxisExtent: 222,
+            mainAxisExtent: 252,
           ),
           itemBuilder: (context, index) {
             return _ImuSensorCard(
@@ -218,6 +218,11 @@ class _ImuSensorCard extends StatelessWidget {
     final gyroValues = converted
         ? data.gyroRads.map((value) => value.toStringAsFixed(2)).toList()
         : data.rawGyro.map((value) => value.toString()).toList();
+    final tempValue = data.rawTemp == null
+        ? '--'
+        : converted
+        ? '${data.tempCelsius!.toStringAsFixed(2)} C'
+        : data.rawTemp!.toString();
 
     final accMagnitude = converted
         ? data.accMagnitudeMs2
@@ -286,6 +291,21 @@ class _ImuSensorCard extends StatelessWidget {
             magnitude: gyroMagnitude,
             scale: converted ? 70.0 : 32768.0,
             color: colors.tertiary,
+          ),
+          const SizedBox(height: 8),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+            decoration: BoxDecoration(
+              color: colors.secondaryContainer.withValues(alpha: 0.7),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Text(
+              converted ? 'TEMP $tempValue' : 'TEMP raw $tempValue',
+              style: TextStyle(
+                color: colors.onSecondaryContainer,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
           ),
         ],
       ),

@@ -2,7 +2,6 @@
 import 'dart:async';
 import 'dart:io';
 import 'dart:isolate';
-import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
@@ -244,8 +243,8 @@ class CsvManager {
 
 String _csvHeaderForFormat(ImuCsvFormat format) {
   return format == ImuCsvFormat.raw
-      ? 'timestamp_us,imu_index,acc_x_raw,acc_y_raw,acc_z_raw,gyro_x_raw,gyro_y_raw,gyro_z_raw'
-      : 'timestamp_us,imu_index,acc_x_ms2,acc_y_ms2,acc_z_ms2,gyro_x_rads,gyro_y_rads,gyro_z_rads';
+      ? 'timestamp_us,imu_index,acc_x_raw,acc_y_raw,acc_z_raw,gyro_x_raw,gyro_y_raw,gyro_z_raw,temp_raw'
+      : 'timestamp_us,imu_index,acc_x_ms2,acc_y_ms2,acc_z_ms2,gyro_x_rads,gyro_y_rads,gyro_z_rads,temp_c';
 }
 
 String _buildCsvRows(List<DpImuPacket> packets, ImuCsvFormat format) {
@@ -256,11 +255,11 @@ String _buildCsvRows(List<DpImuPacket> packets, ImuCsvFormat format) {
       final imu = packet.imu[imuIndex];
       if (format == ImuCsvFormat.raw) {
         rows.writeln(
-          '${packet.timestamp},$imuIndex,${imu.rawAcc[0]},${imu.rawAcc[1]},${imu.rawAcc[2]},${imu.rawGyro[0]},${imu.rawGyro[1]},${imu.rawGyro[2]}',
+          '${packet.timestamp},$imuIndex,${imu.rawAcc[0]},${imu.rawAcc[1]},${imu.rawAcc[2]},${imu.rawGyro[0]},${imu.rawGyro[1]},${imu.rawGyro[2]},${imu.rawTemp ?? ''}',
         );
       } else {
         rows.writeln(
-          '${packet.timestamp},$imuIndex,${imu.accMs2[0]},${imu.accMs2[1]},${imu.accMs2[2]},${imu.gyroRads[0]},${imu.gyroRads[1]},${imu.gyroRads[2]}',
+          '${packet.timestamp},$imuIndex,${imu.accMs2[0]},${imu.accMs2[1]},${imu.accMs2[2]},${imu.gyroRads[0]},${imu.gyroRads[1]},${imu.gyroRads[2]},${imu.tempCelsius?.toStringAsFixed(2) ?? ''}',
         );
       }
     }

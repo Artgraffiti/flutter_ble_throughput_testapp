@@ -657,8 +657,12 @@ class DeviceController extends ChangeNotifier {
     String decodedImuText = "";
     if (_lastImuPacket != null) {
       var imu = _lastImuPacket!.imu[0];
+      final tempText = imu.hasTemperature
+          ? "TEMP: raw=${imu.rawTemp}, value=${imu.tempCelsius!.toStringAsFixed(2)} [C]\n"
+          : "";
       decodedImuText =
           "\n\n[Декодированный IMU]\nTimestamp: ${_lastImuPacket!.timestamp} мкс\n"
+          "Flags: 0x${_lastImuPacket!.flags.toRadixString(16).padLeft(2, '0').toUpperCase()}\n"
           "Получено IMU-снапшотов: $_decodedImuPacketCount\n"
           "Скорость IMU: ${_instantSnapshotRate.toStringAsFixed(2)} snapshot/s мгн, "
           "${avgSnapshotRate.toStringAsFixed(2)} snapshot/s ср, "
@@ -667,7 +671,8 @@ class DeviceController extends ChangeNotifier {
           "${_lastInvalidImuPacketLength > 0 ? ' (последняя длина $_lastInvalidImuPacketLength байт)' : ''}\n"
           "Снапшот ${_lastImuPacket!.snapshotIndex} (СИ, ACC ±${_lastImuPacket!.config.accelRangeG}g, GYRO ±${_lastImuPacket!.config.gyroRangeDps}dps):\n"
           "ACC: x=${imu.accMs2[0].toStringAsFixed(2)}, y=${imu.accMs2[1].toStringAsFixed(2)}, z=${imu.accMs2[2].toStringAsFixed(2)} [m/s^2]\n"
-          "GYR: x=${imu.gyroRads[0].toStringAsFixed(2)}, y=${imu.gyroRads[1].toStringAsFixed(2)}, z=${imu.gyroRads[2].toStringAsFixed(2)} [rad/s]\n";
+          "GYR: x=${imu.gyroRads[0].toStringAsFixed(2)}, y=${imu.gyroRads[1].toStringAsFixed(2)}, z=${imu.gyroRads[2].toStringAsFixed(2)} [rad/s]\n"
+          "$tempText";
     }
 
     final autoTestPrefix = _autoTestProgressText.isEmpty
@@ -681,7 +686,7 @@ class DeviceController extends ChangeNotifier {
     final packets = DpImuPacket.packetsFromBytes(data, config: imuConfig);
     if (packets.isEmpty) return;
 
-    _lastImuPacket = packets.last;
+    _lastImuPacket = packets.last.withFallbackTemperatures(_lastImuPacket);
     if (writeCsv) {
       csvManager.writeImuPacketsToCsv(packets);
     }
